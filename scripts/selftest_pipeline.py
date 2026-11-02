@@ -11,6 +11,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = sys.executable
+
+
+def pick_rubric() -> tuple[Path, str, list[str]]:
+    """选一张能用的评分卡，并返回 (路径, 奖项名, 该奖项的维度 id 列表)。
+
+    公开副本有 rubric.example.json，私有副本只有真实 rubric.json——
+    测试必须两边都能跑，所以按顺序找。
+    """
+    for name in ("rubric.example.json", "rubric.json"):
+        p = ROOT / "assets" / name
+        if not p.is_file():
+            continue
+        try:
+            r = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        awards = list((r.get("awards") or {}).keys())
+        if not awards:
+            continue
+        a = awards[0]
+        dims = [d["id"] for d in r["awards"][a]["dimensions"]]
+        return p, a, dims
+    raise SystemExit("assets 里既没有 rubric.example.json 也没有 rubric.json")
 TMP = Path(tempfile.mkdtemp(prefix="bd-selftest-"))
 R = []          # (环节, 是否通过, 说明)
 
@@ -34,6 +57,8 @@ def main() -> int:
     print("北斗奖评分技能 · 端到端流程测试")
     print("=" * 70)
     print("临时目录:", TMP)
+    RUB, AWARD, DIMS = pick_rubric()
+    print("评分卡:", RUB.name, "| 奖项:", AWARD, "| 维度:", "、".join(DIMS))
 
     # ---------- 1. 依赖体检 ----------
     print("\n[1] 依赖体检")
@@ -43,7 +68,7 @@ def main() -> int:
     # ---------- 2. 抽取 ----------
     print("\n[2] 抽取 docx → doc.json")
     src = TMP / "src"; src.mkdir()
-    body = """示例奖A-测试材料
+    body = """测试材料
 
 一、项目背景
 某污水厂曝气系统能耗偏高，改造前电单耗 0.1069 kWh/吨，改造后降至 0.0784 kWh/吨。
@@ -59,11 +84,11 @@ def main() -> int:
 计算步骤：吨水电耗差 × 处理水量 × 电价。
 年化收益 82.5 万元。
 """
-    docx_path = src / "示例奖A-测试材料.docx"
+    docx_path = src / (AWARD + "-测试材料.docx")
     make_docx(docx_path, body)
     out = TMP / "out"
     r = run([ROOT / "scripts" / "extract_report.py", docx_path, "--out", out])
-    docjson = out / "示例奖A-测试材料.doc.json"
+    docjson = out / ("%s-测试材料.doc.json" % AWARD)
     ok = r.returncode == 0 and docjson.is_file()
     chars = 0
     if ok:
@@ -74,9 +99,9 @@ def main() -> int:
 
     # ---------- 3. 机检 ----------
     print("\n[3] 机检 20 项")
-    chkjson = out / "示例奖A-测试材料.checks.json"
-    r = run([ROOT / "scripts" / "checks.py", docjson, "--award", "示例奖A",
-             "--rubric", ROOT / "assets" / "rubric.example.json", "--out", chkjson])
+    chkjson = out / ("%s-测试材料.checks.json" % AWARD)
+    r = run([ROOT / "scripts" / "checks.py", docjson, "--award", AWARD,
+             "--rubric", RUB, "--out", chkjson])
     ok = r.returncode == 0 and chkjson.is_file()
     summary = {}
     if ok:
@@ -90,50 +115,52 @@ def main() -> int:
 
     # ---------- 4. 打分 ----------
     print("\n[4] 打分（judgments → score.json）")
-    judg = {"award": "示例奖A", "judgments": {
-        "value": {"score": 30, "grade": "A", "rationale": "有实测电单耗与金额",
-                  "quotes": ["改造前电单耗 0.1069 kWh/吨", "累计已实现节约电费 202.745 万元"]},
-        "replication": {"score": 28, "grade": "B", "rationale": "有推广数量",
-                        "quotes": ["已在东部大区 3 个区域 13 家水厂推广应用"]},
-        "novelty": {"score": 24, "grade": "B", "rationale": "有迭代说明",
-                    "quotes": ["本次新增一表多点采样"]},
+    quotes_pool = ["改造前电单耗 0.1069 kWh/吨", "累计已实现节约电费 202.745 万元",
+                    "已在东部大区 3 个区域 13 家水厂推广应用", "本次新增一表多点采样"]
+    judg = {"award": AWARD, "judgments": {
+        dim: {"score": 0, "grade": "A", "rationale": "测试",
+              "quotes": quotes_pool[:2]}
+        for dim in DIMS
     }, "disputes": ["ROI 缺投入侧测算"]}
-    jp = out / "示例奖A-测试材料.judgments.json"
+    # 分数按各维度满分给 80%
+    _rub = json.loads(RUB.read_text(encoding="utf-8"))
+    for d in _rub["awards"][AWARD]["dimensions"]:
+        judg["judgments"][d["id"]]["score"] = round(d["max"] * 0.8, 1)
+    jp = out / ("%s-测试材料.judgments.json" % AWARD)
     jp.write_text(json.dumps(judg, ensure_ascii=False, indent=1), encoding="utf-8")
     r = run([ROOT / "scripts" / "score.py", docjson, "--checks", chkjson, "--judgments", jp,
-             "--award", "示例奖A", "--rubric", ROOT / "assets" / "rubric.example.json", "--out", out])
-    scorejson = out / "示例奖A-测试材料.score.json"
+             "--award", AWARD, "--rubric", RUB, "--out", out])
+    scorejson = out / ("%s-测试材料.score.json" % AWARD)
     ok = r.returncode == 0 and scorejson.is_file()
     sc = {}
     if ok:
         sc = json.loads(scorejson.read_text(encoding="utf-8"))
-        ok = 0 < sc["ai_score"] <= 100 and len(sc["dimensions"]) == 3
+        ok = 0 < sc["ai_score"] <= 100 and len(sc["dimensions"]) == len(DIMS)
         rec("打分产出 score.json", ok, "%s 分 / %s" % (sc.get("ai_score"), sc.get("band")))
         # 引文核验必须生效
         verified = sum(len(d.get("quotes_verified") or []) for d in sc["dimensions"])
         rejected = sum(len(d.get("quotes_rejected") or []) for d in sc["dimensions"])
         rec("引文逐字核验生效", verified >= 4 and rejected == 0,
             "通过 %d 条 / 驳回 %d 条" % (verified, rejected))
-        rec("report.md 已生成", (out / "示例奖A-测试材料.report.md").is_file())
+        rec("report.md 已生成", (out / ("%s-测试材料.report.md" % AWARD)).is_file())
     else:
         rec("打分产出 score.json", False, r.stderr[-160:])
 
     # ---------- 5. 假引文必须被拒 ----------
     print("\n[5] 假引文必须被拒（没引文就没有分）")
-    bad = {"award": "示例奖A", "judgments": {
-        "value": {"score": 35, "grade": "A", "rationale": "编的",
-                  "quotes": ["这句话材料里根本不存在"]},
-        "replication": {"score": 35, "grade": "A", "rationale": "编的", "quotes": ["也不存在"]},
-        "novelty": {"score": 30, "grade": "A", "rationale": "编的", "quotes": ["还是不存在"]},
+    bad = {"award": AWARD, "judgments": {
+        dim: {"score": 100, "grade": "A", "rationale": "编的",
+              "quotes": ["这句话材料里根本不存在"]}
+        for dim in DIMS
     }, "disputes": []}
-    bp = out / "示例奖A-测试材料.bad.judgments.json"
+    bp = out / ("%s-测试材料.bad.judgments.json" % AWARD)
     bp.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
     out2 = TMP / "out2"; out2.mkdir()
     r = run([ROOT / "scripts" / "score.py", docjson, "--checks", chkjson, "--judgments", bp,
-             "--award", "示例奖A", "--rubric", ROOT / "assets" / "rubric.example.json", "--out", out2])
+             "--award", AWARD, "--rubric", RUB, "--out", out2])
     ok = r.returncode == 0
     if ok:
-        b = json.loads((out2 / "示例奖A-测试材料.score.json").read_text(encoding="utf-8"))
+        b = json.loads((out2 / ("%s-测试材料.score.json" % AWARD)).read_text(encoding="utf-8"))
         allrej = all((d.get("quotes_verified") or []) == [] for d in b["dimensions"])
         capped = all(d.get("verified_grade") in ("C", "D") for d in b["dimensions"])
         rec("假引文被全部驳回", allrej and capped, "分数降到 %s" % b.get("ai_score"))
@@ -143,7 +170,7 @@ def main() -> int:
     # ---------- 5b. 未知奖项要给可读错误 ----------
     print("\n[5b] 未知奖项给可读错误（不是 traceback）")
     r = run([ROOT / "scripts" / "score.py", docjson, "--checks", chkjson, "--judgments", jp,
-             "--award", "不存在的奖项", "--rubric", ROOT / "assets" / "rubric.example.json",
+             "--award", "不存在的奖项", "--rubric", RUB,
              "--out", out2])
     rec("未知奖项报错可读", r.returncode == 2 and "评分卡里没有" in r.stderr
         and "Traceback" not in r.stderr, r.stderr.strip().splitlines()[0][:40] if r.stderr else "")
@@ -176,9 +203,9 @@ def main() -> int:
     bdir = TMP / "batch"; bdir.mkdir()
     shutil.copy(docx_path, bdir / docx_path.name)
     # batch 需要 judgments 才打分；先放好
-    shutil.copy(jp, bdir / "示例奖A-测试材料.judgments.json")
+    shutil.copy(jp, bdir / ("%s-测试材料.judgments.json" % AWARD))
     r = run([ROOT / "scripts" / "batch.py", bdir, "--out", bdir,
-             "--rubric", ROOT / "assets" / "rubric.example.json"])
+             "--rubric", RUB])
     ok = r.returncode == 0
     has_lb = (bdir / "leaderboard.md").is_file()
     has_xl = (bdir / "北斗奖评分汇总.xlsx").is_file()
@@ -229,7 +256,7 @@ def main() -> int:
     print("\n[10] 迭代性判定（锚点 + 变化）")
     sys.path.insert(0, str(ROOT / "scripts"))
     import checks as C
-    rub = json.loads((ROOT / "assets" / "rubric.example.json").read_text(encoding="utf-8"))
+    rub = json.loads(RUB.read_text(encoding="utf-8"))
     cases = [
         ("相比第七届参赛版本，本届新增一表多点采样。", "pass"),
         ("相较于过去获奖版本，本次在部署架构上做了重构。", "pass"),
@@ -237,37 +264,43 @@ def main() -> int:
         ("体现了平台对人员工作安排优化的支持。", "fail"),
         ("推广范围由项目应用拓展至跨大区应用。", "fail"),
     ]
-    bad_case = []
-    for txt, exp in cases:
-        d = {"name": "t", "source": "t", "plain": txt, "stats": {}, "blocks": []}
-        got = C.c13_iteration(d, "示例奖C（推广类）", rub)["status"]
-        if got != exp:
-            bad_case.append((txt, got, exp))
-    rec("5 个迭代性用例全判对", not bad_case, str(bad_case) if bad_case else "")
+    # 找一个启用了 iteration 闸门的奖项
+    gate_award = next((a for a, s in rub["awards"].items()
+                       if (s.get("gate_dimension") or {}).get("id") == "iteration"), None)
+    if gate_award:
+        bad_case = []
+        for txt, exp in cases:
+            d = {"name": "t", "source": "t", "plain": txt, "stats": {}, "blocks": []}
+            got = C.c13_iteration(d, gate_award, rub)["status"]
+            if got != exp:
+                bad_case.append((txt, got, exp))
+        rec("5 个迭代性用例全判对", not bad_case, "奖项=%s" % gate_award)
+    else:
+        rec("5 个迭代性用例全判对", None, "该评分卡无 iteration 闸门，跳过")
 
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
     # 不存在的文件
     r = run([ROOT / "scripts" / "checks.py", edge / "nofile.doc.json",
-             "--award", "示例奖A", "--rubric", ROOT / "assets" / "rubric.example.json"])
+             "--award", AWARD, "--rubric", RUB])
     rec("不存在的 doc.json 报错可读", r.returncode == 2 and "找不到" in r.stderr
         and "Traceback" not in r.stderr)
     # 损坏 JSON
     badjson = edge / "bad.doc.json"; badjson.write_text("not json", encoding="utf-8")
     r = run([ROOT / "scripts" / "checks.py", badjson,
-             "--award", "示例奖A", "--rubric", ROOT / "assets" / "rubric.example.json"])
+             "--award", AWARD, "--rubric", RUB])
     rec("损坏 JSON 报错可读", r.returncode == 2 and "不是合法 JSON" in r.stderr
         and "Traceback" not in r.stderr)
     # 不存在的 rubric
-    r = run([ROOT / "scripts" / "checks.py", docjson, "--award", "示例奖A",
+    r = run([ROOT / "scripts" / "checks.py", docjson, "--award", AWARD,
              "--rubric", edge / "norubric.json"])
     rec("不存在的评分卡报错可读", r.returncode == 2 and "找不到" in r.stderr
         and "Traceback" not in r.stderr)
     # 不存在的 judgments
     r = run([ROOT / "scripts" / "score.py", docjson, "--checks", chkjson,
-             "--judgments", edge / "nojudg.json", "--award", "示例奖A",
-             "--rubric", ROOT / "assets" / "rubric.example.json", "--out", edge])
+             "--judgments", edge / "nojudg.json", "--award", AWARD,
+             "--rubric", RUB, "--out", edge])
     rec("不存在的 judgments 报错可读", r.returncode == 2 and "找不到" in r.stderr
         and "Traceback" not in r.stderr)
     # 空目录 batch
