@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>北斗奖申报材料评分技能 · 使用说明</title>
+<style>
+  :root{
+    --ink:#1a1a1a; --muted:#5a6472; --line:#e3e8ef; --bg:#ffffff;
+    --accent:#0b6b57; --accent-soft:#e8f4f0; --warn:#b45309; --warn-soft:#fef3c7;
+    --code-bg:#f6f8fa;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:0; background:#eef1f5; color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",sans-serif;
+    line-height:1.75; font-size:15px;
+  }
+  .page{max-width:900px; margin:0 auto; background:var(--bg); padding:56px 60px 72px; box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  h1{font-size:27px; margin:0 0 6px; letter-spacing:-.3px; font-weight:700}
+  .sub{color:var(--muted); font-size:14px; margin:0 0 34px; padding-bottom:22px; border-bottom:2px solid var(--line)}
+  h2{font-size:19px; margin:40px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); font-weight:650}
+  h3{font-size:15.5px; margin:24px 0 9px; font-weight:650}
+  p{margin:0 0 12px}
+  code{
+    background:var(--code-bg); padding:1.5px 6px; border-radius:4px;
+    font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size:.885em;
+    border:1px solid rgba(0,0,0,.05);
+  }
+  pre{
+    background:var(--code-bg); border:1px solid var(--line); border-radius:7px;
+    padding:15px 17px; overflow-x:auto; margin:0 0 16px; line-height:1.65;
+  }
+  pre code{background:none; border:none; padding:0; font-size:12.8px}
+  table{width:100%; border-collapse:collapse; margin:0 0 18px; font-size:13.8px}
+  th,td{border:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top}
+  th{background:#f7f9fb; font-weight:640}
+  .steps{counter-reset:s; list-style:none; padding:0; margin:0 0 20px}
+  .steps>li{
+    counter-increment:s; position:relative; padding:0 0 18px 46px; margin:0; border-left:2px solid var(--line);
+  }
+  .steps>li:last-child{border-left-color:transparent; padding-bottom:0}
+  .steps>li::before{
+    content:counter(s); position:absolute; left:-15px; top:0; width:29px; height:29px;
+    background:var(--accent); color:#fff; border-radius:50%; display:flex;
+    align-items:center; justify-content:center; font-size:13.5px; font-weight:650;
+  }
+  .steps>li h3{margin:2px 0 6px}
+  .box{border-radius:8px; padding:14px 18px; margin:0 0 18px; font-size:14px}
+  .box.ok{background:var(--accent-soft); border-left:3px solid var(--accent)}
+  .box.warn{background:var(--warn-soft); border-left:3px solid var(--warn)}
+  .box b{font-weight:650}
+  .flow{display:flex; flex-wrap:wrap; gap:7px; align-items:stretch; margin:0 0 20px}
+  .node{
+    background:var(--accent-soft); border:1px solid rgba(11,107,87,.22); border-radius:7px;
+    padding:9px 13px; font-size:13px; flex:1 1 auto; min-width:104px; text-align:center;
+  }
+  .node b{display:block; font-size:12.5px; margin-bottom:2px}
+  .node span{color:var(--muted); font-size:11.5px}
+  .arrow{display:flex; align-items:center; color:var(--muted); font-size:17px; padding:0 1px}
+  .tag{display:inline-block; padding:1px 8px; border-radius:11px; font-size:11.5px; font-weight:600}
+  .tag.y{background:#dcfce7; color:#15803d}
+  .tag.n{background:var(--warn-soft); color:var(--warn)}
+  .kv{margin:0}
+  .kv td:first-child{width:172px; font-weight:600; background:#fafbfc}
+  hr{border:0; border-top:1px solid var(--line); margin:32px 0}
+  .foot{color:var(--muted); font-size:12.5px; margin-top:40px; padding-top:16px; border-top:1px solid var(--line)}
+  @media print{
+    body{background:#fff}
+    .page{box-shadow:none; max-width:none; padding:0 0 20px}
+    h2{page-break-after:avoid} pre,table,.box{page-break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>北斗奖申报材料评分技能</h1>
+<p class="sub">安装 → 使用 → 输出 · 一页说明　|　beidou-award-scorer v1.0</p>
+
+<div class="box ok">
+<b>一句话：</b>把申报材料丢给它，它按官方评审标准打分，并告诉你<b>失分在哪、每句话能不能回原文核对、答辩该追问什么</b>。
+</div>
+
+<h2>一、安装</h2>
+
+<h3>方式 A：一条命令（推荐）</h3>
+<pre><code>python install.py --from github</code></pre>
+<p>装到 <code>~/.agents/skills/</code> 和 <code>~/.qwenworkcn/skills/</code> 两处，agent 与 qwen 都能用；自动完成依赖安装与自测。</p>
+
+<h3>方式 B：本地 zip 包</h3>
+<pre><code>python install.py --from zip --zip ./beidou-award-scorer.zip</code></pre>
+
+<h3>方式 C：让 AI 读 GitHub 地址</h3>
+<p>直接对 AI 说：</p>
+<pre><code>请从 https://github.com/pj1433139082-hue/beidou-award-scorer
+安装这个技能，并完成依赖配置</code></pre>
+
+<h3>只装到指定位置 / 跳过依赖</h3>
+<pre><code>python install.py --from github --target D:/skills/beidou-award-scorer
+python install.py --from github --no-setup</code></pre>
+
+<h3>依赖体检（随时可查）</h3>
+<pre><code>python scripts/setup.py            # 只体检
+python scripts/setup.py --install  # 体检 + 自动装
+python scripts/setup.py --install  # 装完自动自测（抽取→机检）</code></pre>
+<p>依赖只有两个：<code>python-docx</code>（读 docx）、<code>PyMuPDF</code>（读 pdf）。体检脚本本身只用标准库，<b>缺依赖时照样能跑</b>。</p>
+
+<hr>
+
+<h2>二、使用</h2>
+
+<h3>最简单：丢材料给 AI</h3>
+<pre><code>给这份申报材料打分</code></pre>
+<p>附上 docx 或 pdf 即可。<b>通常不需要回答任何问题。</b></p>
+
+<h3>手动跑：单份</h3>
+<pre><code>SKILL=~/.agents/skills/beidou-award-scorer
+RUBRIC=$SKILL/assets/rubric.example.json
+
+# 1) 抽取
+python $SKILL/scripts/extract_report.py 材料.docx --out out/
+# 2) 机检 20 项
+python $SKILL/scripts/checks.py out/材料.doc.json --award 金火炬 --rubric $RUBRIC --out out/
+# 3) 评审判断（读上面两个 json 后填，模板见 assets/judgments-template.md）
+# 4) 打分
+python $SKILL/scripts/score.py out/材料.doc.json     --checks out/材料.checks.json     --judgments out/材料.judgments.json     --award 金火炬 --rubric $RUBRIC --out out/</code></pre>
+
+<h3>手动跑：批量</h3>
+<pre><code>python $SKILL/scripts/batch.py "C:/材料目录" --out out/ --rubric $RUBRIC</code></pre>
+<p>没有 <code>judgments.json</code> 的材料<b>只出机检、不出分</b>——不臆造分数。</p>
+
+<h2>三、流程</h2>
+<div class="flow">
+  <div class="node"><b>① 安装</b><span>一条命令</span></div><div class="arrow">→</div>
+  <div class="node"><b>② 抽取</b><span>docx/pdf → json</span></div><div class="arrow">→</div>
+  <div class="node"><b>③ 机检</b><span>20 项规则</span></div><div class="arrow">→</div>
+  <div class="node"><b>④ 判断</b><span>带原文引文</span></div><div class="arrow">→</div>
+  <div class="node"><b>⑤ 打分</b><span>加权+封顶</span></div><div class="arrow">→</div>
+  <div class="node"><b>⑥ 输出</b><span>报告+清单</span></div>
+</div>
+
+<h3>什么时候会问你</h3>
+<table>
+<tr><th>情况</th><th>会不会问</th></tr>
+<tr><td>文件名带奖项前缀（金火炬-xxx.docx）</td><td><span class="tag y">不问</span> 自动识别</td></tr>
+<tr><td>正文里写了「金火炬」「成果推广」</td><td><span class="tag y">不问</span> 正文能推出</td></tr>
+<tr><td>文件名认不出奖项</td><td><span class="tag n">问一句</span> 「这份投哪个奖项？」</td></tr>
+<tr><td>项目名称、单位、投资额等</td><td><span class="tag y">不问</span> 材料里都有</td></tr>
+<tr><td>命中否决项</td><td><span class="tag y">不问</span> 写进争议点清单</td></tr>
+</table>
+
+<h2>四、输出</h2>
+<table class="kv">
+<tr><td>材料.doc.json</td><td>抽出的正文 + 表格（按正文顺序，带章节路径）</td></tr>
+<tr><td>材料.checks.json</td><td>20 项机检结果，每条带证据定位</td></tr>
+<tr><td>材料.judgments.json</td><td>评审判断：每维度 = 分 / 等级 / 理由 / 逐字引文</td></tr>
+<tr><td>材料.score.json</td><td>维度得分、封顶、扣分、争议点、置信度</td></tr>
+<tr><td><b>材料.report.md</b></td><td><b>给人看的报告</b>：结论 → 维度 → 扣分 → 争议点 → 改进建议</td></tr>
+<tr><td>leaderboard.md</td><td>批量排行榜</td></tr>
+</table>
+
+<p>报告第五节「争议点清单」是给答辩评委用的——直接可以照着追问。</p>
+
+<h2>五、三条铁律</h2>
+<table>
+<tr><th>铁律</th><th>为什么</th></tr>
+<tr><td><b>AI 不是加分项</b></td><td>技术路线只做分类。用「用了 AI」加分是官方规则点名要纠正的偏差。</td></tr>
+<tr><td><b>没有引文就没有分</b></td><td>每条判断都要有原文逐字片段，查不到即降级。分数可被逐行复算。</td></tr>
+<tr><td><b>已实现 ≠ 规划</b></td><td>效益不区分两者，一律按规划计。</td></tr>
+</table>
+
+<h2>六、三条边界</h2>
+<div class="box warn">
+<b>① 机检只查形，不查真。</b>它能说数字在不在、对不对得上，说不了数字是真是假。<b>所有 fail 都要回原文确认后再引用。</b><br><br>
+<b>② 奖项区间是相对刻度</b>（一等 85 / 二等 75 / 三等 65 / 入围 55），不是官方切线。没有官方排名数据就无法校准绝对值。<br><br>
+<b>③ 不替代官方评审。</b>这是自查与初筛工具。AI 只占 25%，最终裁定权在评委与综合审议。
+</div>
+
+<h2>七、常见问题</h2>
+<h3>提示「python 不是内部或外部命令」</h3>
+<p>装 Python 3.10+ 并勾选 <code>Add Python to PATH</code>，然后重开终端。</p>
+<h3>pip 安装超时</h3>
+<p>国内网络可加镜像：<code>python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple python-docx PyMuPDF</code></p>
+<h3>说"缺少 PyMuPDF"但我只交 docx</h3>
+<p>体检需要两个都在。缺 PyMuPDF 只影响读 pdf，不影响 docx；不想装就手动跳过：<code>python scripts/setup.py</code> 只看结果即可。</p>
+<h3>报告里某个维度分特别低</h3>
+<p>看该维度的「封顶」行和「未通过核验」段。前者是机检判定的问题，后者是引文没在原文里找到——两种都要回原文确认。</p>
+
+<div class="foot">
+beidou-award-scorer · MIT · <code>github.com/pj1433139082-hue/beidou-award-scorer</code><br>
+依赖：Python 3.10+ · python-docx · PyMuPDF（无网络调用，无 API key，无数据库）
+</div>
+
+</div>
+</body>
+</html>

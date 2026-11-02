@@ -135,6 +135,11 @@ Fixed mis-detections worth knowing about: merged cells read as empty, sign direc
 
 **Confirm every `fail` against the source before quoting it.**
 
+## Documentation
+
+- [使用说明 (HTML)](docs/使用说明.html) · [PDF](docs/使用说明.pdf) — install, use, outputs
+- [流程图：安装 → 使用 → 输出](docs/流程图-安装到输出.md) — one-page visual walkthrough
+
 ## Repository layout
 
 ```
