@@ -34,6 +34,35 @@ jobs:
       - name: Byte-compile scripts
         run: python -m compileall -q scripts
 
+      - name: Veto is pending, not fatal
+        run: |
+          python - <<'PY' 2>/dev/null || python -c "import sys,subprocess;sys.exit(0)"
+          PY
+          python - <<'PY'
+          import json, sys
+          sys.path.insert(0, "scripts")
+          import score
+
+          rub = json.load(open("assets/rubric.example.json", encoding="utf-8"))
+          spec = rub["awards"]["示例奖C（推广类）"]
+          doc = {"name": "t", "source": "t", "plain": "正文" * 50, "stats": {}}
+          checks = {"checks": [
+              {"id": "C13", "name": "成果迭代性", "status": "fail", "detail": "未见迭代说明", "evidence": [], "dims": ["iteration"]},
+          ]}
+          judg = {"judgments": {
+              "promotion": {"score": 30, "grade": "B", "quotes": []},
+              "economics": {"score": 30, "grade": "B", "quotes": []},
+              "readiness": {"score": 15, "grade": "B", "quotes": []},
+          }}
+          res = score.score_one(doc, checks, judg, rub, "示例奖C（推广类）")
+          assert res["veto"] is False, "a pending veto must not hard-zero the score"
+          assert res["veto_pending"] is True, "C13 fail should raise veto_pending"
+          assert res["ai_score"] > 0, f"score was zeroed: {res['ai_score']}"
+          assert res["disputes"], "pending veto must add a dispute"
+          assert "待" in res["band"] or "pending" in res["band"].lower(), res["band"]
+          print("veto-pending behaviour OK:", res["ai_score"], res["band"])
+          PY
+
       - name: Validate rubrics (bands must not overlap)
         run: |
           python - <<'PY'

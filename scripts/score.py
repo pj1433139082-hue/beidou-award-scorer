@@ -98,7 +98,13 @@ def apply_machine(checks, awards_caps):
     if st("C16") == "warn": cap("value", 0.85, "预计性表述偏多，包装风险")
     if st("C17") == "fail": deduct(2, "全文无图片/截图证据", "D4 截图缺失")
     if awards_caps and st("C13") == "fail":
-        gates.append({"dim": "iteration", "type": "veto", "to": 0, "why": "金火炬否决项：未见成果迭代说明"})
+        # 规则原文：「可附加-成果迭代性」标注为否决项。但 P11 把最终裁定权给了评委综合审议
+        # （人工与 AI 差异 >10% 即转审议），P12 明确 AI 的职责是"生成争议点清单，辅助答辩追问"，
+        # 而非单方面定案。因此这里不直接归零：降分 + 置顶争议点，由人和综合审议裁定。
+        caps["iteration"] = 0.0
+        gates.append({"dim": "iteration", "type": "veto_pending",
+                      "to": 0, "why": "成果迭代性未见说明：按否决项处理，但需人工/综合审议确认"})
+        deduct(5, "成果迭代性未见相较上次参赛版本的说明（否决项待裁定）", "金火炬-否决项")
     return caps, deductions, gates
 
 def score_one(doc, checks, judgments, rubric, award, onsite=None):
@@ -142,9 +148,11 @@ def score_one(doc, checks, judgments, rubric, award, onsite=None):
         ai_score = round(ai_score * 100.0 / max_total, 1)   # 折算回百分制，便于跨材料比较
         max_total = 100
     veto = [g for g in gates if g["type"] == "veto"]
+    veto_pending = [g for g in gates if g["type"] == "veto_pending"]
     if veto: ai_score = 0.0
     band = next((n for n, th in BAND_DEFAULT if ai_score >= th), "待提升")
     if veto: band = "否决（不入围）"
+    elif veto_pending: band = "暂列「%s」，否决项待综合审议确认" % band
 
     disputes = []
     for chk in checks["checks"]:
@@ -159,6 +167,11 @@ def score_one(doc, checks, judgments, rubric, award, onsite=None):
                              "evidence": [b["why"]]})
     for q in judgments.get("disputes") or []:
         disputes.append({"source": "评审员标记", "point": str(q)[:200], "evidence": []})
+    for g in veto_pending:
+        # 置顶：这一条决定项目生死，必须排在最前
+        disputes.insert(0, {"source": "否决项待裁定", "point": g["why"],
+                            "evidence": ["规则原文将成果迭代性标为否决项；P11 最终裁定权在评委综合审议，"
+                                         "P12 要求 AI 输出争议点清单辅助答辩追问，故不直接归零。"]})
 
     warn_fail = sum(1 for c in checks["checks"] if c["status"] in ("warn", "fail"))
     confidence = "高"
@@ -168,7 +181,9 @@ def score_one(doc, checks, judgments, rubric, award, onsite=None):
     out = {"award": award, "track": spec["track"], "name": doc["name"], "source": doc["source"],
            "max_total": max_total, "ai_score": ai_score, "band": band, "confidence": confidence,
            "dimensions": rows, "unscored": unscored, "caps_and_gates": gates, "deductions": deductions,
-           "disputes": disputes, "veto": bool(veto), "rubric_edition": rubric.get("edition")}
+           "disputes": disputes, "veto": bool(veto), "veto_pending": bool(veto_pending),
+           "veto_note": ("；".join(g["why"] for g in veto_pending) or None),
+           "rubric_edition": rubric.get("edition")}
     if onsite is not None:
         try:
             on = float(onsite)
@@ -195,6 +210,7 @@ def render_md(res):
     A("| 奖项区间 | %s |" % res["band"])
     A("| 结论置信度 | %s |" % res["confidence"])
     if res["veto"]: A("| 否决项 | **命中（见下）** |")
+    if res.get("veto_pending"): A("| 否决项 | **待裁定**：%s |" % (res.get("veto_note") or "见争议点清单"))
     if "final_weighted" in res:
         A("| 现场评审分 | %s |" % res["onsite_score"])
         A("| 综合得分（现场 75%% + AI 25%%） | **%s** |" % res["final_weighted"])
