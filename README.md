@@ -23,12 +23,30 @@ Most "AI grading" tools produce a number nobody can audit. This one is built the
 
 ## Install
 
-The skill is a plain directory of scripts plus a SKILL.md. Copy or link it into your agent's skill folder:
+### One command (recommended)
 
 ```bash
-# agent-global
-cp -r beidou-award-scorer ~/.agents/skills/
+python install.py --from github
+```
 
+Clones the repo, installs into **both** `~/.agents/skills/` and `~/.qwenworkcn/skills/` (so agent and Qwen
+can both use it), installs the dependencies, and runs a self-test.
+
+Other sources:
+
+```bash
+python install.py --from zip --zip ./beidou-award-scorer.zip
+python install.py --from dir  --dir  ./beidou-award-scorer
+python install.py --from github --target D:/skills/beidou-award-scorer   # one location only
+python install.py --from github --no-setup                              # skip dependency setup
+```
+
+Or just ask an agent: *"install the skill from https://github.com/pj1433139082-hue/beidou-award-scorer and set up its dependencies"*.
+
+### Manual
+
+```bash
+cp -r beidou-award-scorer ~/.agents/skills/
 # or link it, so edits stay in one place
 # Windows
 mklink /J "%USERPROFILE%\.agents\skills\beidou-award-scorer" "%CD%"
@@ -36,11 +54,16 @@ mklink /J "%USERPROFILE%\.agents\skills\beidou-award-scorer" "%CD%"
 ln -s "$PWD" ~/.agents/skills/beidou-award-scorer
 ```
 
-Dependencies: Python 3.10+, `python-docx`, `PyMuPDF`. No network, no API keys, no database.
+### Dependencies
+
+Only two: `python-docx` (read .docx) and `PyMuPDF` (read .pdf). No network calls, no API keys, no database.
 
 ```bash
-pip install python-docx pymupdf
+python scripts/setup.py            # report what is missing
+python scripts/setup.py --install  # install what is missing, then self-test (extract + check)
 ```
+
+The health check itself uses only the standard library, so it runs even when the dependencies are absent.
 
 ## Quick start
 

@@ -52,6 +52,33 @@ jobs:
             echo "drift correctly detected"
           fi
 
+      - name: Setup and installer are usable
+        run: |
+          python scripts/setup.py --no-self-test
+          python install.py --help > /dev/null
+          python - <<'PY'
+          import json, os, subprocess, sys, tempfile, shutil
+          from pathlib import Path
+
+          # installer must accept a local dir and produce a working skill tree
+          tmp = Path(tempfile.mkdtemp())
+          dest = tmp / "skills" / "beidou-award-scorer"
+          r = subprocess.run([sys.executable, "install.py", "--from", "dir", "--dir", ".",
+                              "--target", str(dest), "--no-setup"],
+                             capture_output=True, text=True)
+          assert r.returncode == 0, r.stderr[-500:]
+          for rel in ["SKILL.md", "scripts/score.py", "scripts/checks.py",
+                      "scripts/extract_report.py", "scripts/setup.py", "install.py",
+                      "assets/rubric.example.json"]:
+              assert (dest / rel).is_file(), rel
+          # and the installed copy must run
+          rr = subprocess.run([sys.executable, str(dest / "scripts" / "setup.py"), "--no-self-test"],
+                              capture_output=True, text=True)
+          assert rr.returncode == 0, rr.stdout[-400:] + rr.stderr[-400:]
+          shutil.rmtree(tmp, ignore_errors=True)
+          print("installer OK")
+          PY
+
       - name: Byte-compile scripts
         run: python -m compileall -q scripts
 

@@ -15,6 +15,36 @@ The rubric shipped in `assets/rubric.example.json` demonstrates the structure wi
 2. **No quote, no score.** Every dimension judgement carries `quotes` — verbatim fragments from the source, at least 6 characters. `score.py` matches each one against the extracted text; an unmatched quote is rejected and the dimension's evidence grade is capped.
 3. **Implemented ≠ planned.** Quantified benefits must be separated into "actual value (implemented)" and "target (planned)". A benefit that does not distinguish them counts as planned.
 
+## Install
+
+```bash
+# one command: clones, installs to both skill roots, prepares dependencies, self-tests
+python install.py --from github
+# or from a local package / folder
+python install.py --from zip --zip ./beidou-award-scorer.zip
+python install.py --from dir  --dir  ./beidou-award-scorer
+```
+
+`install.py` installs into `~/.agents/skills/` and `~/.qwenworkcn/skills/` (both, so agent and Qwen can use it),
+then runs `scripts/setup.py --install` to install the two dependencies and self-test.
+
+Dependencies: `python-docx` (read .docx), `PyMuPDF` (read .pdf). Nothing else, no API keys, no database.
+
+Health check at any time:
+
+```bash
+python scripts/setup.py            # report what is missing
+python scripts/setup.py --install  # install what is missing, then self-test
+```
+
+The health check itself uses only the standard library, so it runs even when the dependencies are absent.
+
+## Before the first run: check dependencies
+
+Run `python scripts/setup.py` once. If it reports a missing dependency, run
+`python scripts/setup.py --install` and tell the user what was installed. If `setup.py` cannot run
+at all (no Python on PATH), say so plainly and point at the install command — do not proceed to scoring.
+
 ## Workflow
 
 ```
