@@ -34,7 +34,8 @@ REQUIRED = [
     "scripts/batch.py",
     "scripts/export_xlsx.py",
     "scripts/sync_check.py",
-    "assets/rubric.example.json",
+    # 评分卡：公开副本是 rubric.example.json，私有副本是 rubric.json
+
     "assets/judgments-template.md",
     "references/scoring-method.md",
     "references/extending.md",
@@ -117,7 +118,11 @@ def main() -> int:
     a = ap.parse_args()
 
     # 完整性检查
+    # 评分卡二选一即可
+    has_rubric = any((ROOT / "assets" / n).is_file() for n in ("rubric.json", "rubric.example.json"))
     missing = [r for r in REQUIRED if not (ROOT / r).is_file()]
+    if not has_rubric:
+        missing.append("assets/rubric.json 或 assets/rubric.example.json")
     if missing:
         print("技能不完整，缺少：", file=sys.stderr)
         for m in missing:
@@ -169,6 +174,8 @@ def main() -> int:
             z.extractall(tmp)
         root = tmp / pkgname
         missing2 = [r for r in REQUIRED if not (root / r).is_file()]
+        if not any((root / "assets" / n).is_file() for n in ("rubric.json", "rubric.example.json")):
+            missing2.append("assets 评分卡")
         if missing2:
             print("包内缺文件：", missing2, file=sys.stderr)
             return 2
