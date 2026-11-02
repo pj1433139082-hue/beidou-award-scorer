@@ -215,6 +215,27 @@ def main() -> int:
         adv_lines = [l for l in txt.splitlines() if l.startswith("- （") or "怎么改**：" in l]
         rec("意见不是机械重复", len(set(adv_lines)) >= min(2, len(adv_lines)) if adv_lines else True)
 
+    # ---------- 6c. Word 导出 ----------
+    print("\n[6c] 逐项目意见导出 Word")
+    wdir = TMP / "word"
+    r = run([ROOT / "scripts" / "export_docx.py", advdir, "--out", wdir, "--merge"])
+    docs = list(wdir.glob("*.docx")) if wdir.is_dir() else []
+    merged = [d for d in docs if "汇总" in d.name]
+    rec("生成 Word 文件", r.returncode == 0 and len(docs) >= 2, "%d 个" % len(docs))
+    rec("生成合并总册", bool(merged))
+    if docs:
+        from docx import Document as _D
+        one = next((d for d in docs if "汇总" not in d.name), None)
+        if one:
+            d = _D(str(one))
+            texts = [p.text for p in d.paragraphs if p.text.strip()]
+            body = "\n".join(texts)
+            # 必须有维度、必须没有 Markdown 残留
+            has_dim = any(k in body for k in ("证据等级", "怎么改", "优先补什么"))
+            no_md = "**" not in body and "##" not in body
+            rec("Word 含必要内容", has_dim, "")
+            rec("Word 无 Markdown 残留", no_md, "发现 ** 或 ##" if not no_md else "")
+
     # ---------- 7. batch 全链路 ----------
     print("\n[7] batch 全链路（docx → Excel）")
     bdir = TMP / "batch"; bdir.mkdir()
