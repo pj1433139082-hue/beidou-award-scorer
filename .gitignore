@@ -7,3 +7,6 @@ out/
 *.judgments.json
 *.report.md
 .venv/
+dist/
+build/
+*.zip
