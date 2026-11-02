@@ -224,15 +224,47 @@ def collect(src: Path) -> list[dict]:
 
 
 def build_summary(wb, rows):
+    """汇总表：固定 5 个维度槽位，所有奖项共用同一列结构。
+
+    早期版本按各奖项维度数动态排布，导致金火炬（3 维）与金引擎（4 维）的建议列
+    落在不同列上，列宽对不齐——看起来就是错位的。改为固定槽位后列宽恒定。
+    """
     ws = wb.create_sheet("汇总")
     ws.sheet_view.showGridLines = False
     ws["A1"] = "北斗奖申报材料评分汇总"
     ws["A1"].font = F_TITLE
     ws["A2"] = "分数区间为相对刻度（85/75/65/55），非官方切线；机检结论需回原文确认"
     ws["A2"].font = F_SMALL
-    ws.merge_cells("A1:H1"); ws.merge_cells("A2:H2")
 
-    # 按奖项分组：同一奖项用同一套维度列，行间不再出现大片"—"
+    MAXDIM = 5                      # 维度槽位上限（金引擎/金智囊 4 个，留 1 个余量）
+    COL_NAME, COL_SCORE, COL_BAND, COL_CONF = 1, 2, 3, 4
+    COL_DIM0 = 5                    # 维度从第 5 列开始
+    COL_RISK = COL_DIM0 + MAXDIM    # 10
+    COL_ADV = COL_RISK + 1          # 11
+    LAST = COL_ADV
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=LAST)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=LAST)
+
+    # 固定列宽（与槽位一一对应，不随奖项变化）
+    widths = {COL_NAME: 44, COL_SCORE: 8, COL_BAND: 12, COL_CONF: 7}
+    for i in range(MAXDIM):
+        widths[COL_DIM0 + i] = 12
+    widths[COL_RISK] = 14
+    widths[COL_ADV] = 64
+    for c, w in widths.items():
+        ws.column_dimensions[get_column_letter(c)].width = w
+
+    # 全局表头
+    hr = 4
+    for c, h in ((COL_NAME, "申报材料"), (COL_SCORE, "总分"), (COL_BAND, "奖项区间"),
+                 (COL_CONF, "置信度"), (COL_RISK, "需关注"), (COL_ADV, "修改建议")):
+        cell = ws.cell(hr, c, h)
+        cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
+        cell.alignment = A_MID; cell.border = BORDER
+    ws.row_dimensions[hr].height = 26
+
+    # 按奖项分组
     groups = []
     for r in rows:
         a = r["award"]
@@ -242,99 +274,103 @@ def build_summary(wb, rows):
             groups.append(g)
         g["rows"].append(r)
 
-    hr = 4
-    head = ["申报材料", "奖项", "总分", "奖项区间", "置信度"] + [""] * 0
-    for c, h in enumerate(head, 1):
-        cell = ws.cell(hr, c, h)
-        cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
-        cell.alignment = A_MID; cell.border = BORDER
-
     rw = hr + 1
     for gi, g in enumerate(groups):
-        # 奖项分组的维度表头行
-        for c, dname in enumerate(g["dims"], 6):
-            cell = ws.cell(rw, c, dname)
-            cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
-            cell.alignment = A_MID; cell.border = BORDER
-        for c, h in ((6 + len(g["dims"]), "需关注"), (7 + len(g["dims"]), "修改建议")):
-            cell = ws.cell(rw, c, h)
-            cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
-            cell.alignment = A_MID; cell.border = BORDER
-        ws.cell(rw, 1, "%s（%d 份）" % (g["award"], len(g["rows"])))
-        ws.cell(rw, 1).font = F_BOLD
-        ws.cell(rw, 1).alignment = A_LEFT
-        ws.cell(rw, 1).fill = PatternFill("solid", fgColor=BAND_BG)
-        for c in range(2, 6):
-            ws.cell(rw, c).fill = PatternFill("solid", fgColor=BAND_BG)
+        # 分组标题行：奖项名占前 4 列，维度名从第 5 列开始
+        ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw, end_column=COL_CONF)
+        gc = ws.cell(rw, COL_NAME, "%s　·　%d 份" % (g["award"], len(g["rows"])))
+        gc.font = Font(name="Microsoft YaHei", size=10.5, bold=True, color="FFFFFF")
+        gc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        for c in range(COL_NAME, LAST + 1):
+            ws.cell(rw, c).fill = PatternFill("solid", fgColor=HEAD_BG)
             ws.cell(rw, c).border = BORDER
+        # 该组的维度名
+        for i, dname in enumerate(g["dims"][:MAXDIM]):
+            cell = ws.cell(rw, COL_DIM0 + i, dname)
+            cell.font = Font(name="Microsoft YaHei", size=9.5, bold=True, color="FFFFFF")
+            cell.alignment = A_MID
         ws.row_dimensions[rw].height = 22
         rw += 1
 
-        for ri, r in enumerate(g["rows"]):
-            ws.cell(rw, 1, short(r["name"], 30)).alignment = A_LEFT
-            ws.cell(rw, 2, "").alignment = A_MID      # 奖项已在分组标题行给出
-            ws.cell(rw, 3, r["ai_score"]).alignment = A_MID
-            ws.cell(rw, 4, short(r["band"], 18)).alignment = A_MID
-            ws.cell(rw, 5, r["confidence"]).alignment = A_MID
-            for c, dname in enumerate(g["dims"], 6):
-                d = next((x for x in r["dimensions"] if x["name"] == dname), None)
-                cell = ws.cell(rw, c, ("%s/%s" % (d["score"], d["max"])) if d else "—")
-                cell.alignment = A_MID
-                if d:
-                    ratio = d["score"] / d["max"] if d["max"] else 1
-                    if ratio < 0.6:
-                        cell.fill = PatternFill("solid", fgColor=WARN_BG)
-                    elif ratio >= 0.85:
-                        cell.fill = PatternFill("solid", fgColor="DCFCE7")
+        for r in g["rows"]:
+            # 材料名
+            # 分组标题已写明奖项，材料名去掉前缀，避免重复占宽
+            disp = re.sub(r"^(特别奖-AI融创[^-]*|金点子|金刚钻|金引擎|金智囊|金火炬)[-－—]?", "", r["name"])
+            c1 = ws.cell(rw, COL_NAME, short(disp, 40))
+            c1.font = F_CELL; c1.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True, indent=1)
+            # 总分
+            c2 = ws.cell(rw, COL_SCORE, r["ai_score"])
+            c2.font = Font(name="Microsoft YaHei", size=11, bold=True, color=INK)
+            c2.alignment = A_MID
+            # 区间
+            band_txt = r["band"]
+            if "暂列" in band_txt:          # 否决待裁定的长文案，压成短标签
+                band_txt = "待裁定"
+            elif len(band_txt) > 8:
+                band_txt = band_txt[:7] + "…"
+            c3 = ws.cell(rw, COL_BAND, band_txt)
+            c3.font = band_font(r["band"])
+            c3.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            # 置信度
+            c4 = ws.cell(rw, COL_CONF, r["confidence"])
+            c4.font = F_CELL; c4.alignment = A_MID
+            # 维度分（固定槽位）
+            for i, d in enumerate(r["dimensions"][:MAXDIM]):
+                cell = ws.cell(rw, COL_DIM0 + i, "%s/%s" % (d["score"], d["max"]))
+                cell.font = F_CELL; cell.alignment = A_MID
+                ratio = d["score"] / d["max"] if d["max"] else 1
+                if ratio < 0.6:
+                    cell.fill = PatternFill("solid", fgColor=WARN_BG)
+                elif ratio >= 0.85:
+                    cell.fill = PatternFill("solid", fgColor="E8F5E9")
+            # 空槽位留白
+            for i in range(len(r["dimensions"]), MAXDIM):
+                ws.cell(rw, COL_DIM0 + i, "").border = BORDER
+            # 需关注
             risks = []
             if r.get("veto"):
                 risks.append("否决")
             if r.get("veto_pending"):
                 risks.append("否决待裁定")
-            ncap = sum(1 for c in r.get("caps_and_gates", []) if c.get("type") == "cap")
+            ncap = sum(1 for x in r.get("caps_and_gates", []) if x.get("type") == "cap")
             if ncap:
                 risks.append("封顶%d" % ncap)
             if r.get("deductions"):
                 risks.append("扣%d" % sum(x["points"] for x in r["deductions"]))
-            cell = ws.cell(rw, 6 + len(g["dims"]), "、".join(risks) or "—")
-            cell.alignment = A_MID
-            # 修改建议：按失分从多到少，逐维度给出要点（每维度取第一条建议）
+            rc = ws.cell(rw, COL_RISK, "、".join(risks) or "—")
+            rc.font = F_CELL; rc.alignment = A_MID
+            if risks:
+                rc.fill = PatternFill("solid", fgColor=WARN_BG)
+            # 修改建议（失分最多的两个维度）
             items = []
             for d in sorted(r["dimensions"], key=lambda x: (x["max"] - x["score"]), reverse=True):
                 if d["max"] - d["score"] <= 0.01:
                     continue
-                a_txt = build_advice(d, r.get("_checks") or [], r.get("caps_and_gates") or [], r.get("deductions") or [])
+                a_txt = build_advice(d, r.get("_checks") or [], r.get("caps_and_gates") or [],
+                                     r.get("deductions") or [])
                 if not a_txt:
                     continue
-                # 取该维度建议的第一句（以句号/中文句号切）
                 parts = re.split(r"(?<=。)", a_txt)
                 first = next((p.strip() for p in parts if p.strip()), "")
-                first = re.split(r"[，：]", first)[0] if len(first) > 34 else first
-                if first and first not in items:
-                    items.append("[%s] %s" % (d["name"], first))
-                if len(items) >= 2:
+                if len(first) > 38:
+                    first = first[:37] + "…"
+                items.append("[%s] %s" % (d["name"], first))
+                if len(items) >= 1:
                     break
-            acell = ws.cell(rw, 7 + len(g["dims"]), "；".join(items) or "—")
-            acell.alignment = A_LEFT
-            bf = band_fill(r["band"])
-            if bf:
-                ws.cell(rw, 4).fill = PatternFill("solid", fgColor=bf)
-            ws.cell(rw, 4).font = band_font(r["band"])
-            if risks:
-                cell.fill = PatternFill("solid", fgColor=WARN_BG)
-            # 行高固定，别让长建议把行撑爆
-            ws.row_dimensions[rw].height = 30
-            for c in range(1, 8 + len(g["dims"])):
-                ws.cell(rw, c).font = F_CELL
+            ac = ws.cell(rw, COL_ADV, chr(10).join(items) or "—")
+            ac.font = Font(name="Microsoft YaHei", size=9, color=MUTED)
+            ac.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True, indent=1)
+
+            for c in range(COL_NAME, LAST + 1):
                 ws.cell(rw, c).border = BORDER
+            # 行高按材料名长度估算（中文按 2 字宽计）
+            est = len(disp) * 1.0
+            ws.row_dimensions[rw].height = 24 if est <= 26 else (34 if est <= 44 else 44)
             rw += 1
+
         rw += 1   # 组间留空
 
-    maxdim = max((len(g["dims"]) for g in groups), default=0)
-    widths = [30, 8, 7, 17, 8] + [11] * maxdim + [15, 62]
-    for c, w in enumerate(widths, 1):
-        ws.column_dimensions[get_column_letter(c)].width = w
-    ws.row_dimensions[hr].height = 24
+    ws.freeze_panes = ws.cell(hr + 1, COL_NAME)
     return ws
 
 
@@ -375,12 +411,13 @@ def build_detail(wb, rows):
                     for x in rejected)
                 quotes = (quotes + "；" if quotes else "") + "【未通过核验】" + rej_txt
             advice_txt = build_advice(d, r.get("_checks") or [], r.get("caps_and_gates") or [], r.get("deductions") or [])
+            disp_name = re.sub(r"^(特别奖-AI融创[^-]*|金点子|金刚钻|金引擎|金智囊|金火炬)[-－—]?", "", r["name"])
             vals = [
-                short(r["name"], 28), d["name"], d["max"], d["score"],
+                short(disp_name, 26), d["name"], d["max"], d["score"],
                 ("%.0f%%" % (d["score"] / d["max"] * 100)) if d["max"] else "—",
                 d.get("verified_grade", "—"),
-                "；".join(reasons) or "—",
-                short(quotes, 80) if quotes else "—",
+                short("；".join(reasons), 46) or "—",
+                short(quotes, 55) if quotes else "—",
                 short(advice_txt, 150) or "—",
             ]
             for c, v in enumerate(vals, 1):
@@ -392,9 +429,17 @@ def build_detail(wb, rows):
                 ws.cell(rw, 4).fill = PatternFill("solid", fgColor=WARN_BG)
             if d.get("quotes_rejected"):
                 ws.cell(rw, 8).fill = PatternFill("solid", fgColor=BAD_BG)
+            # 行高：按每列"字数 ÷ 列宽"估换行数，取最大值（中文按 1 字≈1 单位宽）
+            col_w = [30, 10, 6, 6, 7, 8, 32, 40, 62]
+            max_lines = 1
+            for vi, v in enumerate(vals):
+                w = col_w[vi] if vi < len(col_w) else 20
+                lines_needed = max(1, int(len(str(v)) / max(w - 1, 4)) + 1)
+                max_lines = max(max_lines, lines_needed)
+            ws.row_dimensions[rw].height = min(96, max(20, max_lines * 13))
             rw += 1
 
-    for c, w in enumerate([28, 12, 7, 7, 8, 9, 42, 60, 70], 1):
+    for c, w in enumerate([30, 10, 6, 6, 7, 8, 32, 40, 62], 1):
         ws.column_dimensions[get_column_letter(c)].width = w
     ws.row_dimensions[hr].height = 26
     ws.freeze_panes = ws.cell(hr + 1, 1)
@@ -422,7 +467,8 @@ def build_disputes(wb, rows):
     for r in rows:
         for dsp in r.get("disputes") or []:
             ev = "；".join(str(x) for x in (dsp.get("evidence") or []))
-            vals = [short(r["name"], 28), dsp.get("source", "—"), short(dsp.get("point", ""), 90), short(ev, 50) or "—"]
+            disp_name = re.sub(r"^(特别奖-AI融创[^-]*|金点子|金刚钻|金引擎|金智囊|金火炬)[-－—]?", "", r["name"])
+            vals = [short(disp_name, 26), dsp.get("source", "—"), short(dsp.get("point", ""), 90), short(ev, 60) or "—"]
             for c, v in enumerate(vals, 1):
                 cell = ws.cell(rw, c, v)
                 cell.font = F_CELL; cell.border = BORDER
@@ -439,7 +485,7 @@ def build_disputes(wb, rows):
         ws.cell(hr + 1, 1, "无争议点。").font = F_CELL
         ws.merge_cells(start_row=hr + 1, start_column=1, end_row=hr + 1, end_column=4)
 
-    for c, w in enumerate([28, 16, 62, 36], 1):
+    for c, w in enumerate([30, 14, 62, 40], 1):
         ws.column_dimensions[get_column_letter(c)].width = w
     ws.row_dimensions[hr].height = 26
     ws.freeze_panes = ws.cell(hr + 1, 1)
