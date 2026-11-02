@@ -72,11 +72,22 @@ Award names are whatever keys your rubric defines; `--award` must match one of t
 | C11 lab & trial-plant evidence | fail / warn | intelligence capped at 0.40 / 0.70 |
 | C12 product readiness | warn / fail | readiness capped at 0.65 / 0.45 |
 | C14 novelty contrast | fail / warn | novelty capped at 0.60 / 0.80 |
-| C13 result iteration (award-specific) | fail | **veto** — total score forced to 0 |
+| C13 result iteration (award-specific) | fail | **veto pending review** — dimension zeroed + 5-point deduction + dispute pinned to top; **total score is NOT zeroed**, band reads "pending review" |
 
 Fixed deductions (D1 duplicate benefit −3, D2 number mismatch −2, D3 missing baseline −2, D4 missing screenshots −2, leftover placeholders −2) apply to the subtotal.
 
 Check IDs and their award scoping live in `scripts/checks.py`; edit that file and the rubric together when changing an award's criteria.
+
+## Why a veto does not zero the score
+
+The rubric marks result-iteration as a veto item, but the same rules also state that the final call
+belongs to a review panel (a >10% divergence between human and AI scoring goes to panel review), and that
+the AI's job is to *produce a dispute list that drives follow-up questioning* — the source material itself
+lists "one-way input/output, no means of re-confirmation" as a known weakness to fix.
+
+So this tool **deducts and escalates instead of unilaterally failing a submission**: the dimension is
+zeroed, 5 points are deducted, the dispute is pinned to the top of the list, and the band is annotated
+"pending review". To restore a hard veto, change `veto_pending` back to `veto` in `scripts/score.py`.
 
 ## Two cases that produce no score
 
