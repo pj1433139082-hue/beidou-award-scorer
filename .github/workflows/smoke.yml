@@ -18,6 +18,19 @@ jobs:
       - name: Install dependencies
         run: pip install python-docx pymupdf
 
+      - name: Drift check (shared scripts must be byte-identical across copies)
+        run: |
+          # 造一份副本，验证检查器确实能发现分叉
+          mkdir -p /tmp/mirror
+          cp -r scripts references assets /tmp/mirror/
+          python scripts/sync_check.py /tmp/mirror
+          echo "intentional drift" >> /tmp/mirror/scripts/checks.py
+          if python scripts/sync_check.py /tmp/mirror; then
+            echo "::error::sync_check failed to detect drift"; exit 1
+          else
+            echo "drift correctly detected"
+          fi
+
       - name: Byte-compile scripts
         run: python -m compileall -q scripts
 

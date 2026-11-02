@@ -86,6 +86,24 @@ Global rules live at the top level: `evidence_grades` (A/B/C/D with non-overlapp
 
 Sum of `max` across dimensions should equal the award's total. `validate_rubric_bands()` refuses to score if evidence-grade bands overlap.
 
+## Keeping a private copy in sync
+
+A common setup: this public repo holds the generic rubric, while a private copy holds the real
+competition criteria. Both should run **identical scripts**.
+
+```bash
+# after changing anything in scripts/, references/ or assets/judgments-template.md
+python scripts/sync_check.py /path/to/private-copy
+```
+
+Exit 0 = the two copies agree. Exit 1 lists exactly which shared files diverged. The rubric file is
+*not* compared — that is the one thing the two copies are supposed to differ on (private copy:
+`assets/rubric.json`; public repo: `assets/rubric.example.json`). The scripts pick whichever exists,
+so the same code runs in both places without a flag.
+
+CI runs this check too, and asserts it **fails** on an intentionally drifted mirror — a drift detector
+that never fires is worse than none.
+
 ## What the checks can and cannot do
 
 They verify **form, not truth**. They can say a number is present, consistent, and accompanied by evidence — never that it is real.

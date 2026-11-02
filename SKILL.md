@@ -97,6 +97,16 @@ Check IDs and their award scoping live in `scripts/checks.py`; edit that file an
 - Fixed mis-detections worth knowing about: merged cells read as empty, sign direction on percentage drops, percentages picked from a neighbouring row, table headers counted as data, over-broad keyword matches, and award-specific table layouts checked against the generic template. New ones remain possible — **confirm every fail against the source before quoting it.**
 - Rubric values are only as good as their source. Keep the citation for each dimension's max score in `references/scoring-method.md` or your own rubric notes.
 
+## How the rubric is resolved
+
+The scripts resolve the default rubric by trying `assets/rubric.json` first, then
+`assets/rubric.example.json`. That lets this repo and a private copy share **identical scripts**
+while differing only in the rubric file. Pass `--rubric` to be explicit.
+
+Award-specific checks are driven by `profile` in the rubric, not by award names hard-coded in Python.
+An award must declare both `profile` and `filename_prefixes`; without them, batch runs cannot detect the
+award from a filename and the award-specific checks all fall to `na`.
+
 ## References
 
 - `references/scoring-method.md` — evidence grading, cap mapping, quote verification, composition formula, and the reasoning behind them.

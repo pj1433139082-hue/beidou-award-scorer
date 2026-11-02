@@ -327,6 +327,19 @@ def c20_roi(doc, award, rub):
     return R("C20", "ROI 可算性", st,
              "投入=%s、收益=%s、量化数字≥3=%s" % (has_in, has_out, has_num), dims=["value"])
 
+def _default_rubric():
+    """默认评分卡：优先同目录的 rubric.json，没有就用 rubric.example.json。
+
+    两个文件名都认，是为了让「本地完整评分卡」和「公开脱敏示例卡」共用同一份脚本。
+    """
+    assets = Path(__file__).resolve().parents[1] / "assets"
+    for name in ("rubric.json", "rubric.example.json"):
+        p = assets / name
+        if p.is_file():
+            return p
+    return assets / "rubric.json"
+
+
 CHECKS = [c01_required_tables, c02_actual_vs_plan, c03_baseline, c04_evidence_column, c05_recompute,
           c06_promotion_list, c07_calc_steps, c08_duplicate_benefit, c09_placeholders, c10_length,
           c11_model_lab, c12_product_readiness, c13_iteration, c14_novelty_compare, c15_strategy_fit,
@@ -354,7 +367,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="机检 doc.json -> checks.json")
     ap.add_argument("doc_json")
     ap.add_argument("--award", required=True, help="奖项名，必须与 rubric 里 awards 的某个键一致")
-    ap.add_argument("--rubric", default=str(Path(__file__).resolve().parents[1] / "assets" / "rubric.example.json"))
+    ap.add_argument("--rubric", default=str(_default_rubric()))
     ap.add_argument("--out")
     a = ap.parse_args()
     doc = json.loads(Path(a.doc_json).read_text(encoding="utf-8"))

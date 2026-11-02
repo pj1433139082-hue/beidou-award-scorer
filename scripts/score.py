@@ -17,6 +17,15 @@ from pathlib import Path
 BAND_DEFAULT = [("一等奖候选", 85), ("二等奖候选", 75), ("三等奖候选", 65), ("入围候选", 55), ("待提升", 0)]
 UNSCORED = -1.0
 
+def _default_rubric():
+    """默认评分卡：优先 rubric.json，没有就用 rubric.example.json。"""
+    assets = Path(__file__).resolve().parents[1] / "assets"
+    for name in ("rubric.json", "rubric.example.json"):
+        p = assets / name
+        if p.is_file():
+            return p
+    return assets / "rubric.json"
+
 def validate_rubric_bands(rubric):
     """启动自检：证据等级分档必须互不重叠（左闭右开），否则同一分值会落进两档。
 
@@ -252,7 +261,7 @@ def main():
     ap.add_argument("--judgments", required=True, help="评审员判断 json（含逐字引文）")
     ap.add_argument("--award", required=True, help="奖项名，必须与 rubric 里 awards 的某个键一致")
     ap.add_argument("--onsite", help="现场评审得分（可选，用于 75/25 合成与 10%% 争议判定）")
-    ap.add_argument("--rubric", default=str(Path(__file__).resolve().parents[1] / "assets" / "rubric.example.json"))
+    ap.add_argument("--rubric", default=str(_default_rubric()))
     ap.add_argument("--out", default=".")
     a = ap.parse_args()
     doc = json.loads(Path(a.doc_json).read_text(encoding="utf-8"))
