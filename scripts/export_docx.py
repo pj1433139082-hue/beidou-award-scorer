@@ -84,6 +84,19 @@ FALLBACK = {
 }
 
 
+AWARD_PREFIX = r"^(金点子|金刚钻|金引擎|金智囊|金火炬|特别奖-[^\s\-－—]*)[-－—\s]*"
+
+
+def strip_award(name: str) -> str:
+    """去掉「奖项-」前缀，并清掉残留的前导连字符与空格。
+
+    有的材料名是「特别奖-AI融创主报告 - 慧眼巡水厂…」，只去前缀会留下「- 慧眼巡水厂」。
+    """
+    s = re.sub(AWARD_PREFIX, "", str(name or "").strip())
+    s = re.sub(r"^[-－—\s]+", "", s).strip()
+    return s or str(name or "")
+
+
 def set_run(run, size=10.5, bold=False, color=BLACK, italic=False):
     run.font.name = FONT
     run.font.size = Pt(size)
@@ -103,7 +116,7 @@ def para(doc, text="", size=10.5, bold=False, color=BLACK, italic=False,
     pf = p.paragraph_format
     pf.space_before = Pt(before)
     pf.space_after = Pt(after)
-    pf.line_spacing = 1.35
+    pf.line_spacing = 1.15
     if indent:
         pf.left_indent = Cm(indent)
     if keep:
@@ -113,7 +126,7 @@ def para(doc, text="", size=10.5, bold=False, color=BLACK, italic=False,
     return p
 
 
-def h(doc, text, size=11.5, before=14):
+def h(doc, text, size=11, before=10):
     return para(doc, text, size=size, bold=True, before=before, after=4, keep=True)
 
 
@@ -124,14 +137,14 @@ def bullet(doc, text, indent=0.55, size=10):
     pf.first_line_indent = Cm(-0.35)
     pf.space_before = Pt(0)
     pf.space_after = Pt(2)
-    pf.line_spacing = 1.3
-    set_run(p.add_run("· "), size=size)
-    set_run(p.add_run(text), size=size)
+    pf.line_spacing = 1.12
+    set_run(p.add_run("·"), size=size)
+    set_run(p.add_run("\u00a0" + text), size=size)
     return p
 
 
 def label(doc, text, size=9.5):
-    return para(doc, text, size=size, bold=True, color=GREY, before=6, after=2, keep=True)
+    return para(doc, text, size=size, bold=True, color=GREY, before=4, after=1, keep=True)
 
 
 def find_quote(plain: str, keywords: list[str], max_len: int = 70) -> str:
@@ -186,8 +199,15 @@ def collect_issues(row: dict) -> list[dict]:
         did = dim["id"]
         problems = []
 
+        # 该维度的封顶是由哪条机检造成的（score.py 写进 caps_and_gates[].check）
+        cap_check = None
+        for g in row.get("caps_and_gates") or []:
+            if g.get("dim") == did and g.get("check"):
+                cap_check = g["check"]
+                break
         if dim.get("cap_reason"):
-            problems.append({"kind": "cap", "text": dim["cap_reason"], "ev": []})
+            problems.append({"kind": "cap", "text": dim["cap_reason"],
+                             "ev": [], "cap_check": cap_check})
 
         for cid, c in checks.items():
             if c.get("status") not in ("warn", "fail"):
@@ -238,7 +258,12 @@ def collect_issues(row: dict) -> list[dict]:
         if not fixes and FALLBACK.get(did):
             fixes.append(FALLBACK[did])
 
-        # 去重：封顶原因与机检 detail 常常在说同一件事
+        # 封顶原因若已由某条机检具体说明，就丢掉笼统的封顶描述
+        check_ids = {p.get("cid") for p in problems if p.get("cid")}
+        problems = [p for p in problems
+                    if not (p.get("kind") == "cap" and p.get("cap_check") in check_ids)]
+
+        # 再去重：封顶原因与机检 detail 常常在说同一件事
         seen_txt, uniq = set(), []
         for pr in problems:
             # 去标点后取前 8 字做键：封顶原因与机检 detail 通常前半句一致
@@ -276,12 +301,25 @@ def build(data: dict, out_path, doc=None):
         st.font.size = Pt(10.5)
         st.element.rPr.rFonts.set(qn("w:eastAsia"), FONT)
 
-    para(doc, data["name"], size=15, bold=True, after=4)
-    para(doc, "奖项：%s　　得分：%s / 100　　区间：%s　　置信度：%s" % (
-        data["award"], data["ai_score"], data["band"], data["confidence"]),
-        size=10, color=GREY, after=2)
+    # 标题去掉「奖项-」前缀：元信息第一行已经写明奖项，重复会让长标题折成两行
+    title = strip_award(data["name"])
+    # 长标题主动在「——」处断行：否则 Word 会在任意汉字间断开（如「…自决策系 / 统」）
+    if len(title) > 28 and "——" in title:
+        main, sub = title.split("——", 1)
+        main, sub = main.strip().rstrip("-－—").strip(), sub.strip()
+        p = para(doc, "", size=12.5, bold=True, after=1)
+        set_run(p.add_run(main), size=12.5, bold=True)
+        p2 = para(doc, "", size=10.5, bold=True, color=GREY, after=3)
+        set_run(p2.add_run("——" + sub), size=10.5, bold=True, color=GREY)
+    else:
+        para(doc, title, size=12.5, bold=True, after=3)
+    # 元信息拆两行：一行放短的，区间单独一行，避免「置信度：」后面只剩一个字换行
+    para(doc, "奖项：%s　　得分：%s / 100　　置信度：%s" % (
+        data["award"], data["ai_score"], data["confidence"]),
+        size=9.5, color=GREY, after=1)
+    para(doc, "区间：%s" % data["band"], size=9.5, color=GREY, after=2)
     if data.get("veto_pending"):
-        para(doc, "否决项：待裁定（%s）" % (data.get("veto_note") or ""), size=10, after=2)
+        para(doc, "否决项：待裁定（%s）" % (data.get("veto_note") or ""), size=9.5, after=2)
 
     h(doc, "一、总体判断")
     dims = data["dimensions"]
@@ -300,7 +338,7 @@ def build(data: dict, out_path, doc=None):
         d = it["dim"]
         pct = round(d["score"] / d["max"] * 100) if d["max"] else 0
         para(doc, "%d. %s　%s / %s（%d%%）" % (i, d["name"], d["score"], d["max"], pct),
-             size=10.5, bold=True, before=9, after=3, keep=True)
+             size=10.5, bold=True, before=7, after=2, keep=True)
         if it["problems"]:
             label(doc, "原文哪里不好")
             for pr in it["problems"][:4]:
@@ -326,7 +364,7 @@ def build(data: dict, out_path, doc=None):
         for i, it in enumerate(ranked, 1):
             d = it["dim"]
             para(doc, "%d. %s（可追回 %s 分）" % (i, d["name"], it["loss"]),
-                 size=10.5, bold=True, before=6, after=2, keep=True)
+                 size=10.5, bold=True, before=5, after=1, keep=True)
             para(doc, it["fixes"][0] if it["fixes"] else FALLBACK.get(d["id"], ""),
                  size=10, indent=0.55)
 
@@ -390,7 +428,11 @@ def build_merged(rows, out_path: Path):
     for award, items in order.items():
         para(doc, award, size=10.5, bold=True, before=8, after=2)
         for r in sorted(items, key=lambda x: -x["ai_score"]):
-            para(doc, "    %s　　　%s 分" % (r["name"], r["ai_score"]), size=9.5, after=1)
+            # 分数放最前：名称再长也不会把分数挤到下一行；名称截断保持一致行宽
+            nm = strip_award(r["name"])
+            if len(nm) > 34:
+                nm = nm[:33] + "…"
+            para(doc, "    %5.1f 分　%s" % (r["ai_score"], nm), size=9.5, after=1)
 
     for r in rows:
         doc.add_page_break()
