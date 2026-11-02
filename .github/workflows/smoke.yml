@@ -18,6 +18,27 @@ jobs:
       - name: Install dependencies
         run: pip install python-docx pymupdf
 
+      - name: Drift check tolerates line-ending differences only
+        run: |
+          mkdir -p /tmp/mirror
+          cp -r scripts references assets /tmp/mirror/
+          python scripts/sync_check.py /tmp/mirror
+          # CRLF vs LF must NOT be reported as drift
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("/tmp/mirror/scripts/checks.py")
+          p.write_bytes(p.read_bytes().replace(b"\n", b"\r\n"))
+          print("converted mirror to CRLF")
+          PY
+          python scripts/sync_check.py /tmp/mirror
+          # a real content change MUST be reported
+          echo "intentional drift" >> /tmp/mirror/scripts/checks.py
+          if python scripts/sync_check.py /tmp/mirror; then
+            echo "::error::sync_check failed to detect real drift"; exit 1
+          else
+            echo "real drift correctly detected"
+          fi
+
       - name: Drift check (shared scripts must be byte-identical across copies)
         run: |
           # 造一份副本，验证检查器确实能发现分叉
