@@ -17,6 +17,10 @@ from pathlib import Path
 BAND_DEFAULT = [("一等奖候选", 85), ("二等奖候选", 75), ("三等奖候选", 65), ("入围候选", 55), ("待提升", 0)]
 UNSCORED = -1.0
 
+
+class NoOnsiteError(Exception):
+    """给不设现场答辩的奖项传了 --onsite。"""
+
 def _default_rubric():
     """默认评分卡：优先 rubric.json，没有就用 rubric.example.json。"""
     assets = Path(__file__).resolve().parents[1] / "assets"
@@ -111,9 +115,10 @@ def apply_machine(checks, awards_caps):
 def score_one(doc, checks, judgments, rubric, award, onsite=None):
     spec = rubric["awards"][award]
     if onsite is not None and spec.get("no_onsite"):
-        raise SystemExit(
-            "错误：%s 不设现场评审（规则原文：成果推广赛道不设答辩环节，采用 AI+人工辅助方式评定）。\n"
-            "      不接受 --onsite；该奖项不参与现场 75%% + AI 25%% 合成。去掉 --onsite 重跑。" % award)
+        raise NoOnsiteError(
+            "%s 不设现场评审（规则原文：成果推广赛道不设答辩环节，采用 AI+人工辅助方式评定）。\n"
+            "  不接受 --onsite；该奖项不参与现场 75%% + AI 25%% 合成。\n"
+            "  去掉 --onsite 重跑。" % award)
     plain_norm = norm(doc["plain"])
     caps, deductions, gates = apply_machine(checks["checks"], [award])
 
@@ -289,7 +294,11 @@ def main():
     checks = json.loads(Path(a.checks).read_text(encoding="utf-8"))
     judg = json.loads(Path(a.judgments).read_text(encoding="utf-8"))
     rub = json.loads(Path(a.rubric).read_text(encoding="utf-8"))
-    res = score_one(doc, checks, judg, rub, a.award, a.onsite)
+    try:
+        res = score_one(doc, checks, judg, rub, a.award, a.onsite)
+    except NoOnsiteError as exc:
+        print("错误：" + str(exc), file=sys.stderr)
+        return 2
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stem = Path(a.doc_json).name.replace(".doc.json", "")
     (out / (stem + ".score.json")).write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
