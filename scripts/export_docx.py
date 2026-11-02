@@ -1,24 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把逐项目意见导出成 Word（.docx），格式简洁明了。
+"""逐项目意见 → Word（简洁版）。
 
-用法：
-  python scripts/export_docx.py 意见/ --out 意见word/
-  python scripts/export_docx.py 意见/ --out 意见word/ --merge   # 合并成一本
+每份材料：一、总体判断　二、逐项问题与修改（原文哪里不好 / 怎么改）　三、优先补什么
 
-排版原则（面向水务领导）：
-  · A4，页边距 2cm，正文 10.5pt 宋体/微软雅黑
-  · 分数用加粗大字，区间用颜色
-  · 每个维度一个小标题 + 要点列表，不用密集表格
-  · 引文用缩进斜体 + 左侧竖线
+刻意不加配色、不加底纹、不加表格线——打印和投影都清楚。
+数据直接读 score.json + checks.json，能拿到 checks[].evidence 里的原文定位。
 """
 from __future__ import annotations
-import argparse, json, re
+import argparse, json
 from pathlib import Path
 
 try:
     from docx import Document
-    from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
@@ -27,425 +21,381 @@ except ImportError:
     print("缺少 python-docx。先运行：python scripts/setup.py --install", file=__import__("sys").stderr)
     raise SystemExit(2)
 
-INK = RGBColor(0x1A, 0x1A, 0x1A)
-MUTED = RGBColor(0x5A, 0x64, 0x72)
-ACCENT = RGBColor(0x0B, 0x6B, 0x57)
-WARN = RGBColor(0xB4, 0x53, 0x09)
-BAD = RGBColor(0xB9, 0x1C, 0x1C)
-GOOD = RGBColor(0x15, 0x80, 0x3D)
-BLUE = RGBColor(0x1D, 0x4E, 0xD8)
-BAND_COLOR = {
-    "一等奖": GOOD, "二等奖": BLUE, "三等奖": RGBColor(0xA1, 0x62, 0x07),
-    "入围": MUTED, "待提升": WARN, "否决": BAD,
+BLACK = RGBColor(0, 0, 0)
+GREY = RGBColor(0x55, 0x55, 0x55)
+FONT = "微软雅黑"
+
+# 机检编号 → (属于哪些维度, 怎么改)
+CHECKS = {
+    "C01": ({"_global"}, "补齐三张必备表：基本信息表、基线与效果对照表、验证清单。"),
+    "C02": ({"value"}, "效益表分成两栏：「实际值【已实现】」与「远期目标【规划/在研】」。已兑现的填实际值并附台账截图，未兑现的只填远期目标。"),
+    "C03": ({"value"}, "每项效益补上改造前的基准值和对比周期，否则变化率算不出来、别人无法复算。"),
+    "C04": ({"value"}, "每个已实现效益补佐证材料：台账截图 / 运行日志 / 核算表，填进「佐证材料」列。"),
+    "C05": ({"value", "economics"}, "正文里的百分比与表格数字对齐，偏差控制在 5 个百分点以内。"),
+    "C06": ({"replication", "promotion"}, "补一份可点数的推广清单：大区 / 区域 / 水厂逐个列名，正文写清覆盖几个大区、几个区域、几个项目。"),
+    "C07": ({"economics"}, "补「计算步骤」表：每一步写清公式、代入值、结果、单位、含义。只给总金额无法复算。"),
+    "C08": ({"value", "economics"}, "同一金额在多处出现时，确认没有重复计入（例如吨水单耗与总费用各算一次）。"),
+    "C09": ({"_global"}, "把没填的占位符（下划线、XXXX、（文本））全部补实。"),
+    "C10": ({"_global"}, "补齐材料模板要求但当前缺失的段落。"),
+    "C11": ({"intelligence"}, "补三件套：模型实验室线上部署记录、试点厂生产调用记录、不少于 90 天的运行验证数据。"),
+    "C12": ({"readiness"}, "写清从方案到产品的转化程度：已产品化（有合同/订单/收入）→ 非常符合；仅有原型 → 符合；仍在方案 → 一般。"),
+    "C13": ({"iteration"}, "补一段「相较上次参赛版本」的迭代说明：改了什么、指标提升多少。"),
+    "C14": ({"novelty"}, "补与原有办法的量化对照：同一场景下新旧方案的效果差值（成本 / 精度 / 时效）。"),
+    "C15": ({"usability"}, "补两段：与集团战略方向的对应关系；当前卡点的具体表现（现状数据 + 卡在哪 + 本方案如何解决）。"),
+    "C16": ({"value", "usability"}, "把「预计 / 有望」换成实际发生的量，成效要落到具体金额或比例。"),
+    "C17": ({"_global"}, "插入关键运行界面、台账、报告截图，并加文字说明。"),
+    "C18": ({"replication", "promotion"}, "补齐推广案例佐证、经济测算过程、产品形态说明三块。"),
+    "C19": ({"_global"}, "补齐专属模板六段：实施背景、模型应用、业务价值、ROI 核算、下一步计划、量化数据。"),
+    "C20": ({"economics"}, "ROI 分投入与收益两段写，并配足可复算的量化数字。"),
 }
-FONT_CN = "微软雅黑"
+
+PROBLEM = {
+    "C01": "缺少必备表格",
+    "C02": "效益里分不清哪些已实现、哪些还在规划",
+    "C03": "有实际值但没有基准值，变化率算不出来",
+    "C04": "已实现的效益没有佐证材料",
+    "C05": "正文百分比与表格数字对不上",
+    "C06": "没有可点数的推广清单",
+    "C07": "没有计算步骤表，金额无法复算",
+    "C08": "同一金额在多处出现，疑似重复计入",
+    "C09": "还有未填的占位符",
+    "C10": "缺少模板要求的段落",
+    "C11": "模型实验室 / 试点厂 / 90 天验证的证据不全",
+    "C12": "没写清产品转化到什么程度",
+    "C13": "没有「相较上次参赛版本」的迭代说明",
+    "C14": "没有与原有办法的量化对照",
+    "C15": "战略对齐或卡点描述缺一项",
+    "C16": "预计性表述偏多，实际数据不足",
+    "C17": "缺少运行截图等图形证据",
+    "C18": "推广 / 测算 / 产品形态证据不齐",
+    "C19": "专属模板段落不全",
+    "C20": "ROI 缺可复算的投入与收益",
+}
+
+FALLBACK = {
+    "value": "把效益拆成「已实现」与「规划」两栏分别给数，每组数字都要能用一个公式复算出来。",
+    "replication": "给出可点数的推广事实：已落地几个大区 / 区域 / 厂站，逐个列名，并说明可复制的原因。",
+    "novelty": "点明与原有做法的差别：同一场景下新旧方案的指标差，并说明差异来自哪个技术点。",
+    "intelligence": "补模型实验室部署记录、试点厂生产调用日志、以及不少于 90 天的运行表现。",
+    "promotion": "补推广台账：按大区—区域—厂站三级列清单，标明部署时间与规模。",
+    "economics": "补一张计算步骤表：输入参数、公式、中间结果、最终金额、单位与口径各占一列。",
+    "readiness": "写清交付形态与转化程度：是否已有合同 / 订单 / 收入，是否有标准产品文档与运维手册。",
+    "usability": "补战略对应关系与卡点具体表现（现状数据 + 卡在哪 + 怎么解决）。",
+}
 
 
-def set_font(run, size=10.5, bold=False, color=INK, italic=False, name=FONT_CN):
-    run.font.name = name
+def set_run(run, size=10.5, bold=False, color=BLACK, italic=False):
+    run.font.name = FONT
     run.font.size = Pt(size)
     run.font.bold = bold
     run.font.italic = italic
     run.font.color.rgb = color
-    # 中文字体必须单独设 eastAsia，否则 Word 里中文会退回宋体
     rpr = run._element.get_or_add_rPr()
     rf = rpr.find(qn("w:rFonts"))
     if rf is None:
         rf = OxmlElement("w:rFonts"); rpr.append(rf)
-    rf.set(qn("w:eastAsia"), name)
+    rf.set(qn("w:eastAsia"), FONT)
 
 
-def shade(cell, hex_color: str):
-    tcPr = cell._tc.get_or_add_tcPr()
-    sh = OxmlElement("w:shd")
-    sh.set(qn("w:val"), "clear"); sh.set(qn("w:color"), "auto"); sh.set(qn("w:fill"), hex_color)
-    tcPr.append(sh)
-
-
-def cell_text(cell, text, size=9.5, bold=False, color=INK, align=WD_ALIGN_PARAGRAPH.LEFT):
-    cell.text = ""
-    p = cell.paragraphs[0]
-    p.alignment = align
-    p.paragraph_format.space_before = Pt(1)
-    p.paragraph_format.space_after = Pt(1)
-    set_font(p.add_run(str(text)), size=size, bold=bold, color=color)
-
-
-def add_rule(doc):
-    """一条细横线。"""
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(2)
-    p.paragraph_format.space_after = Pt(6)
-    pPr = p._p.get_or_add_pPr()
-    pbdr = OxmlElement("w:pBdr")
-    bottom = OxmlElement("w:bottom")
-    bottom.set(qn("w:val"), "single"); bottom.set(qn("w:sz"), "6")
-    bottom.set(qn("w:space"), "1"); bottom.set(qn("w:color"), "D9DEE5")
-    pbdr.append(bottom); pPr.append(pbdr)
-
-
-def add_heading(doc, text, level=1):
-    sizes = {1: 15, 2: 12.5, 3: 11}
-    colors = {1: ACCENT, 2: INK, 3: INK}
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(12 if level == 1 else 9)
-    p.paragraph_format.space_after = Pt(4)
-    p.paragraph_format.keep_with_next = True
-    set_font(p.add_run(text), size=sizes.get(level, 11), bold=True, color=colors.get(level, INK))
-    return p
-
-
-def add_kv_table(doc, pairs, widths=(3.2, 12.5)):
-    t = doc.add_table(rows=0, cols=2)
-    t.alignment = WD_TABLE_ALIGNMENT.LEFT
-    t.autofit = False
-    for k, v in pairs:
-        row = t.add_row()
-        cell_text(row.cells[0], k, size=9.5, bold=True, color=MUTED)
-        shade(row.cells[0], "F7F9FB")
-        cell_text(row.cells[1], v, size=10)
-        row.cells[0].width = Cm(widths[0])
-        row.cells[1].width = Cm(widths[1])
-    # 只留横向细线
-    tbl = t._tbl
-    borders = OxmlElement("w:tblBorders")
-    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        el = OxmlElement("w:" + edge)
-        el.set(qn("w:val"), "single"); el.set(qn("w:sz"), "4")
-        el.set(qn("w:color"), "E3E8EF")
-        borders.append(el)
-    tbl.tblPr.append(borders)
-    return t
-
-
-def add_quote(doc, text):
-    """引文：缩进 + 左侧竖线 + 灰字。"""
+def para(doc, text="", size=10.5, bold=False, color=BLACK, italic=False,
+         before=0, after=3, indent=0, keep=False):
     p = doc.add_paragraph()
     pf = p.paragraph_format
-    pf.left_indent = Cm(0.6)
-    pf.space_before = Pt(1); pf.space_after = Pt(1)
-    pPr = p._p.get_or_add_pPr()
-    pbdr = OxmlElement("w:pBdr")
-    left = OxmlElement("w:left")
-    left.set(qn("w:val"), "single"); left.set(qn("w:sz"), "12")
-    left.set(qn("w:space"), "8"); left.set(qn("w:color"), "C9D6D1")
-    pbdr.append(left); pPr.append(pbdr)
-    set_font(p.add_run(text), size=9, color=MUTED, italic=True)
-
-
-def add_bullet(doc, text, color=INK, bold_prefix=None):
-    p = doc.add_paragraph(style="List Bullet")
-    p.paragraph_format.space_before = Pt(0); p.paragraph_format.space_after = Pt(1)
-    p.paragraph_format.left_indent = Cm(0.5)
-    if bold_prefix:
-        set_font(p.add_run(bold_prefix), size=10, bold=True, color=color)
-    set_font(p.add_run(text), size=10, color=color)
+    pf.space_before = Pt(before)
+    pf.space_after = Pt(after)
+    pf.line_spacing = 1.35
+    if indent:
+        pf.left_indent = Cm(indent)
+    if keep:
+        pf.keep_with_next = True
+    if text:
+        set_run(p.add_run(text), size=size, bold=bold, color=color, italic=italic)
     return p
 
 
-# ---------- 解析意见 Markdown ----------
-def parse_md(md: str) -> dict:
-    """按 ## 段落切分再解析，避免不同段落里相同格式的行互相串。
+def h(doc, text, size=11.5, before=14):
+    return para(doc, text, size=size, bold=True, before=before, after=4, keep=True)
 
-    早期版本用行首模式猜，导致「争议点」里的编号列表被当成「优先补什么」。
+
+def bullet(doc, text, indent=0.55, size=10):
+    p = doc.add_paragraph()
+    pf = p.paragraph_format
+    pf.left_indent = Cm(indent + 0.35)
+    pf.first_line_indent = Cm(-0.35)
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(2)
+    pf.line_spacing = 1.3
+    set_run(p.add_run("· "), size=size)
+    set_run(p.add_run(text), size=size)
+    return p
+
+
+def label(doc, text, size=9.5):
+    return para(doc, text, size=size, bold=True, color=GREY, before=6, after=2, keep=True)
+
+
+def find_quote(plain: str, keywords: list[str], max_len: int = 70) -> str:
+    """在原文里找一句能佐证问题的句子。
+
+    要求至少命中 2 个线索词，且句子不是纯标题/纯奖项名——
+    否则会挑出「参赛赛道：成果应用赛道 金火炬」这种对问题毫无说明力的句子。
     """
-    d = {"title": "", "meta": [], "summary": "", "dims": [], "disputes": [],
-         "deductions": [], "priority": []}
-    # 先按 ## 切成段
-    sections = {}
-    cur = "_head"
-    sections[cur] = []
-    for ln in md.splitlines():
-        if ln.startswith("## "):
-            cur = ln[3:].strip()
-            sections[cur] = []
+    if not plain:
+        return ""
+    import re as _re
+    NOISE = ("参赛赛道", "申报单位", "项目名称", "填报", "目录")
+    # 纯章节标题（[H3] 2.3.1 xxx）、纯名称串，对说明问题没有价值
+    import re as _re2
+    HEADING = _re2.compile(r"^\s*(\[H\d\]\s*)?(\d+(\.\d+)*\s*)?[^。；]{0,30}$")
+    for s in _re.split(r"[。；\n]", plain):
+        s = s.strip()
+        if not (12 <= len(s) <= 200):
             continue
-        sections[cur].append(ln)
-    # 维度内容在「各维度得分与意见」这一段里，必须一起解析
-    dimsec = next((v for k, v in sections.items() if k.startswith("各维度")), [])
-    body = sections.get("_head", []) + dimsec
-    disp = next((v for k, v in sections.items() if k.startswith("争议点")), [])
-    ded = next((v for k, v in sections.items() if k.startswith("固定扣分")), [])
-    pri = next((v for k, v in sections.items() if k.startswith("优先补什么")), [])
-    lines = body
-    i = 0
-    while i < len(lines):
-        ln = lines[i]
-        if ln.startswith("# "):
-            d["title"] = ln[2:].strip()
-        elif ln.startswith("| ") and "---" not in ln:
-            cells = [c.strip() for c in ln.strip("|").split("|")]
-            if len(cells) == 2 and cells[0] and cells[0] != "":
-                d["meta"].append((cells[0], cells[1].replace("**", "")))
-        elif ln.startswith("**一句话**："):
-            d["summary"] = ln.replace("**一句话**：", "").strip()
-        elif ln.startswith("### "):
-            head = ln[4:].strip()
-            m = re.match(r"(.+?)\u3000(\S+) / (\S+)（(\d+)%）", head)
-            dim = {"name": head, "score": "", "max": "", "pct": "", "items": [], "quotes": [],
-                   "rejected": [], "fixes": [], "cap": "", "grade": ""}
-            if m:
-                dim.update(name=m.group(1).strip(), score=m.group(2), max=m.group(3), pct=m.group(4))
-            d["dims"].append(dim)
-        elif d["dims"] and ln.startswith("- "):
-            cur = d["dims"][-1]
-            txt = ln[2:].strip()
-            # 按明确模式提取，避免用 in 做模糊判断（会把 ** 一起留下）
-            m_cap = re.match(r"\*\*封顶原因\*\*：(.+)$", txt)
-            m_note = re.match(r"⚠\s*注意：(.+)$", txt)
-            m_grade = re.match(r"证据等级：\*\*([ABCD])\*\*", txt)
-            m_fix = re.match(r"（(C\d+) ([^）]+)）(.+)$", txt)
-            if m_cap:
-                cur["cap"] = m_cap.group(1).strip()
-            elif m_note:
-                cur["note"] = m_note.group(1).strip()
-            elif m_grade:
-                cur["grade"] = m_grade.group(1)
-            elif m_fix:
-                cur["fixes"].append((m_fix.group(1), m_fix.group(2), m_fix.group(3).strip()))
-            else:
-                cur["items"].append(txt)
-        elif d["dims"] and ln.startswith("  > "):
-            d["dims"][-1]["quotes"].append(ln.strip()[2:].strip())
-        elif d["dims"] and ln.strip().startswith("> ") and "未通过核验" in "".join(lines[max(0,i-3):i]):
-            d["dims"][-1]["rejected"].append(ln.strip()[2:].strip())
-        elif ln.startswith("**怎么改**"):
-            pass
-        i += 1
-    # 争议点
-    for ln in disp:
-        m = re.match(r"^\d+\. \*\*(.+?)\*\*：(.+)$", ln.strip())
-        if m:
-            d["disputes"].append((m.group(1), m.group(2)))
-    # 固定扣分
-    for ln in ded:
-        if ln.strip().startswith("- "):
-            d["deductions"].append(ln.strip()[2:].strip())
-    # 优先补什么
-    for ln in pri:
-        m = re.match(r"^\d+\. (.+)$", ln.strip())
-        if m:
-            d["priority"].append(m.group(1).strip())
-    return d
+        if any(n in s for n in NOISE):
+            continue
+        # 没有句读、长度又短 → 多半是标题，跳过
+        if HEADING.match(s) and "。" not in s and len(s) < 40:
+            continue
+        hit = sum(1 for k in keywords if k in s)
+        if hit >= 2:
+            return s if len(s) <= max_len else s[:max_len - 1] + "…"
+    return ""
 
 
-def build_doc(data: dict, out_path, doc=None):
+# 各机检问题对应的原文线索词（用于定位原文）
+HINTS = {
+    "C06": ["推广", "应用", "大区", "区域", "厂"],
+    "C07": ["测算", "计算", "公式", "节约", "万元"],
+    "C11": ["模型实验室", "试点", "上线", "运行"],
+    "C12": ["产品", "交付", "合同", "原型"],
+    "C13": ["迭代", "升级", "版本"],
+    "C14": ["对比", "优于", "原有", "传统"],
+    "C15": ["战略", "卡点", "痛点"],
+    "C17": ["截图", "图"],
+    "C02": ["效益", "实际值", "规划"],
+    "C03": ["基准", "改造前"],
+    "C04": ["佐证", "台账"],
+}
+
+
+def collect_issues(row: dict) -> list[dict]:
+    """把 score.json + checks.json 整理成「每个维度有哪些原文问题 + 怎么改」。"""
+    checks = row.get("_checks", {})
+    out = []
+    for dim in row["dimensions"]:
+        did = dim["id"]
+        problems = []
+
+        if dim.get("cap_reason"):
+            problems.append({"kind": "cap", "text": dim["cap_reason"], "ev": []})
+
+        for cid, c in checks.items():
+            if c.get("status") not in ("warn", "fail"):
+                continue
+            belongs = CHECKS.get(cid, (set(), ""))[0]
+            if "_global" in belongs or did not in belongs:
+                continue
+            # 机检自己声明的 dims 优先：它说属于哪个维度就只挂哪个
+            cdims = c.get("dims") or []
+            if cdims and did not in cdims:
+                continue
+            ev = [str(x) for x in (c.get("evidence") or [])][:4]
+            if not ev:
+                # 机检没给定位时，从原文找一句线索句
+                q = find_quote(row.get("_plain", ""), HINTS.get(cid, []))
+                if q:
+                    ev = ["文中原句：" + q]
+            problems.append({
+                "kind": "check", "cid": cid,
+                "text": c.get("detail") or PROBLEM.get(cid, ""),
+                "ev": ev,
+            })
+
+        for rj in dim.get("quotes_rejected") or []:
+            q = rj.get("quote") if isinstance(rj, dict) else str(rj)
+            problems.append({"kind": "quote", "text": "引文在原文中找不到：%s" % q, "ev": []})
+
+        if dim.get("claimed_grade") and dim.get("claimed_grade") != dim.get("verified_grade"):
+            problems.append({"kind": "grade",
+                             "text": "证据等级从 %s 下调到 %s：部分引文未能在原文中逐字核验"
+                                     % (dim.get("claimed_grade"), dim.get("verified_grade")),
+                             "ev": []})
+
+        fixes = []
+        for pr in problems:
+            cid = pr.get("cid")
+            if cid:
+                t = CHECKS.get(cid, (set(), ""))[1]
+                if t and t not in fixes:
+                    fixes.append(t)
+        for cid, c in checks.items():
+            if c.get("status") in ("warn", "fail"):
+                belongs = CHECKS.get(cid, (set(), ""))[0]
+                if did in belongs:
+                    t = CHECKS.get(cid, (set(), ""))[1]
+                    if t and t not in fixes:
+                        fixes.append(t)
+        if not fixes and FALLBACK.get(did):
+            fixes.append(FALLBACK[did])
+
+        out.append({"dim": dim, "problems": problems, "fixes": fixes[:2],
+                    "loss": round(dim["max"] - dim["score"], 1)})
+    return [x for x in out if x["loss"] > 0.01 or x["problems"]]
+
+
+def build(data: dict, out_path, doc=None):
     if doc is None:
         doc = Document()
         sec = doc.sections[0]
         sec.page_width, sec.page_height = Cm(21), Cm(29.7)
-        for attr in ("left_margin", "right_margin"):
-            setattr(sec, attr, Cm(2.0))
-        sec.top_margin = Cm(1.8); sec.bottom_margin = Cm(1.8)
+        sec.left_margin = sec.right_margin = Cm(2.2)
+        sec.top_margin = sec.bottom_margin = Cm(2.0)
         st = doc.styles["Normal"]
-        st.font.name = FONT_CN; st.font.size = Pt(10.5)
-        st.element.rPr.rFonts.set(qn("w:eastAsia"), FONT_CN)
+        st.font.name = FONT
+        st.font.size = Pt(10.5)
+        st.element.rPr.rFonts.set(qn("w:eastAsia"), FONT)
 
-    # 标题
-    p = doc.add_paragraph()
-    p.paragraph_format.space_after = Pt(2)
-    set_font(p.add_run(data["title"]), size=16, bold=True, color=INK)
+    para(doc, data["name"], size=15, bold=True, after=4)
+    para(doc, "奖项：%s　　得分：%s / 100　　区间：%s　　置信度：%s" % (
+        data["award"], data["ai_score"], data["band"], data["confidence"]),
+        size=10, color=GREY, after=2)
+    if data.get("veto_pending"):
+        para(doc, "否决项：待裁定（%s）" % (data.get("veto_note") or ""), size=10, after=2)
 
-    # 基本信息表
-    meta = [(k, v) for k, v in data["meta"] if k]
-    if meta:
-        add_kv_table(doc, meta)
+    h(doc, "一、总体判断")
+    dims = data["dimensions"]
+    by_ratio = sorted(dims, key=lambda d: d["score"] / d["max"] if d["max"] else 1)
+    best = by_ratio[-1]
+    worst = by_ratio[:2]
+    para(doc, "最强项是%s（%s/%s）。最需要补的是%s。" % (
+        best["name"], best["score"], best["max"],
+        "、".join("%s（%s/%s）" % (d["name"], d["score"], d["max"]) for d in worst)), size=10.5)
 
-    # 一句话结论
-    if data["summary"]:
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(8); p.paragraph_format.space_after = Pt(4)
-        pPr = p._p.get_or_add_pPr()
-        pbdr = OxmlElement("w:pBdr")
-        for edge, sz in (("top", "4"), ("bottom", "4"), ("left", "18"), ("right", "4")):
-            el = OxmlElement("w:" + edge)
-            el.set(qn("w:val"), "single"); el.set(qn("w:sz"), sz)
-            el.set(qn("w:space"), "6" if edge in ("left", "right") else "4")
-            el.set(qn("w:color"), "0B6B57")
-            pbdr.append(el)
-        pPr.append(pbdr)
-        set_font(p.add_run(data["summary"]), size=10.5, color=INK)
+    issues = collect_issues(data)
+    h(doc, "二、逐项问题与修改")
+    if not issues:
+        para(doc, "各维度均已达标，无需补强。", size=10.5)
+    for i, it in enumerate(issues, 1):
+        d = it["dim"]
+        pct = round(d["score"] / d["max"] * 100) if d["max"] else 0
+        para(doc, "%d. %s　%s / %s（%d%%）" % (i, d["name"], d["score"], d["max"], pct),
+             size=10.5, bold=True, before=9, after=3, keep=True)
+        if it["problems"]:
+            label(doc, "原文哪里不好")
+            for pr in it["problems"][:4]:
+                bullet(doc, pr["text"])
+                evs = pr.get("ev") or []
+                for ev in evs[:2]:
+                    # 原文定位单独一行，缩进区分
+                    p = doc.add_paragraph()
+                    pf = p.paragraph_format
+                    pf.left_indent = Cm(1.5)
+                    pf.space_before = Pt(0)
+                    pf.space_after = Pt(1)
+                    pf.line_spacing = 1.25
+                    set_run(p.add_run("原文：" + ev), size=9, color=GREY)
+        if it["fixes"]:
+            label(doc, "怎么改")
+            for fx in it["fixes"][:2]:
+                bullet(doc, fx)
 
-    # 各维度
-    add_heading(doc, "各维度得分与意见", 1)
-    for dim in data["dims"]:
-        # 维度标题行：名称 …… 分数
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(10); p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.keep_with_next = True
-        set_font(p.add_run(dim["name"]), size=12, bold=True, color=INK)
-        if dim["score"]:
-            set_font(p.add_run("　　%s / %s" % (dim["score"], dim["max"])), size=12, bold=True, color=ACCENT)
-            set_font(p.add_run("（%s%%）" % dim["pct"]), size=10, color=MUTED)
+    ranked = sorted(issues, key=lambda x: -x["loss"])[:3]
+    if ranked:
+        h(doc, "三、优先补什么")
+        for i, it in enumerate(ranked, 1):
+            d = it["dim"]
+            para(doc, "%d. %s（可追回 %s 分）" % (i, d["name"], it["loss"]),
+                 size=10.5, bold=True, before=6, after=2, keep=True)
+            para(doc, it["fixes"][0] if it["fixes"] else FALLBACK.get(d["id"], ""),
+                 size=10, indent=0.55)
 
-        if dim["grade"]:
-            add_bullet(doc, "（这一项说的是引文能否在原文逐字核验，不等于业务达成度）",
-                       color=MUTED, bold_prefix="证据等级 %s " % dim["grade"])
-        if dim["cap"]:
-            add_bullet(doc, dim["cap"], color=WARN, bold_prefix="封顶原因：")
-        if dim.get("note"):
-            add_bullet(doc, dim["note"].replace("⚠ 注意：", ""), color=WARN, bold_prefix="注意：")
+    ds = data.get("disputes") or []
+    if ds:
+        h(doc, "四、答辩可能被追问")
+        for i, x in enumerate(ds[:4], 1):
+            para(doc, "%d. %s" % (i, (x.get("point") or "").strip()), size=10, indent=0.55, after=2)
+        if len(ds) > 4:
+            para(doc, "（另有 %d 条，见 Excel 争议点表）" % (len(ds) - 4),
+                 size=9, color=GREY, indent=0.55, after=2)
 
-        if dim["quotes"]:
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(4); p.paragraph_format.space_after = Pt(1)
-            set_font(p.add_run("已核验原文引文"), size=9, bold=True, color=MUTED)
-            for q in dim["quotes"][:3]:
-                add_quote(doc, q)
-        if dim["rejected"]:
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(4); p.paragraph_format.space_after = Pt(1)
-            set_font(p.add_run("未通过核验的引文（原文中找不到，不计分）"), size=9, bold=True, color=BAD)
-            for q in dim["rejected"][:3]:
-                add_quote(doc, q)
-
-        if dim["fixes"]:
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(6); p.paragraph_format.space_after = Pt(1)
-            p.paragraph_format.keep_with_next = True
-            set_font(p.add_run("怎么改"), size=9.5, bold=True, color=ACCENT)
-            for item in dim["fixes"][:2]:
-                if isinstance(item, tuple):
-                    cid, cname, body = item
-                    add_bullet(doc, body, bold_prefix="【%s %s】" % (cid, cname))
-                else:
-                    add_bullet(doc, re.sub(r"^（(C\d+) ([^）]+)）", r"【\1 \2】", item))
-        add_rule(doc)
-
-    # 争议点
-    if data["disputes"]:
-        add_heading(doc, "争议点（答辩会被追问）", 1)
-        for i, (src, pt) in enumerate(data["disputes"], 1):
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(1); p.paragraph_format.space_after = Pt(1)
-            p.paragraph_format.left_indent = Cm(0.5)
-            set_font(p.add_run("%d. " % i), size=10, color=MUTED)
-            set_font(p.add_run(src + "："), size=10, bold=True, color=BAD if "否决" in src else INK)
-            set_font(p.add_run(pt), size=10, color=INK)
-
-    # 扣分
-    if data["deductions"]:
-        add_heading(doc, "固定扣分", 1)
-        for x in data["deductions"]:
-            add_bullet(doc, x, color=WARN)
-
-    # 优先补什么
-    if data["priority"]:
-        add_heading(doc, "优先补什么（按可追回分数排序）", 1)
-        for i, x in enumerate(data["priority"], 1):
-            m = re.match(r"\*\*(.+?)\*\*（可追回 (.+?) 分）：(.+)$", x)
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(2); p.paragraph_format.space_after = Pt(2)
-            p.paragraph_format.left_indent = Cm(0.5)
-            if m:
-                set_font(p.add_run("%d. " % i), size=10.5, bold=True, color=ACCENT)
-                set_font(p.add_run(m.group(1)), size=10.5, bold=True, color=INK)
-                set_font(p.add_run("  可追回 %s 分" % m.group(2)), size=9.5, bold=True, color=GOOD)
-                p2 = doc.add_paragraph()
-                p2.paragraph_format.left_indent = Cm(1.0)
-                p2.paragraph_format.space_before = Pt(0); p2.paragraph_format.space_after = Pt(3)
-                set_font(p2.add_run(m.group(3)), size=10, color=MUTED)
-            else:
-                set_font(p.add_run("%d. %s" % (i, x)), size=10, color=INK)
-
-    # 页脚说明
-    add_rule(doc)
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(2)
-    set_font(p.add_run("分数为自动机检 + 证据定级结果，需人工复核 judgments.json 后方可作为评审结论。"),
-             size=8.5, color=MUTED, italic=True)
+    para(doc, "分数为自动机检 + 证据定级结果，需人工复核后方可作为评审结论。",
+         size=8.5, color=GREY, italic=True, before=12)
 
     if out_path is not None:
         doc.save(str(out_path))
     return out_path
 
 
-def build_merged(files, out_path: Path):
-    """把全部意见合成一本，按奖项分组，每份新起一页。"""
+def load(src: Path):
+    rows = []
+    for sf in sorted(src.glob("*.score.json")):
+        d = json.loads(sf.read_text(encoding="utf-8"))
+        stem = sf.name.replace(".score.json", "")
+        cf = src / (stem + ".checks.json")
+        d["_checks"] = {x["id"]: x for x in
+                        (json.loads(cf.read_text(encoding="utf-8")).get("checks", [])
+                         if cf.is_file() else [])}
+        # 带上原文，用于给"原文哪里不好"补充定位
+        df = src / (stem + ".doc.json")
+        d["_plain"] = (json.loads(df.read_text(encoding="utf-8")).get("plain", "")
+                       if df.is_file() else "")
+        d["_stem"] = stem
+        rows.append(d)
+    return rows
+
+
+def build_merged(rows, out_path: Path):
     doc = Document()
     sec = doc.sections[0]
     sec.page_width, sec.page_height = Cm(21), Cm(29.7)
-    sec.left_margin = sec.right_margin = Cm(2.0)
-    sec.top_margin = sec.bottom_margin = Cm(1.8)
+    sec.left_margin = sec.right_margin = Cm(2.2)
+    sec.top_margin = sec.bottom_margin = Cm(2.0)
     st = doc.styles["Normal"]
-    st.font.name = FONT_CN; st.font.size = Pt(10.5)
-    st.element.rPr.rFonts.set(qn("w:eastAsia"), FONT_CN)
+    st.font.name = FONT; st.font.size = Pt(10.5)
+    st.element.rPr.rFonts.set(qn("w:eastAsia"), FONT)
 
-    datas = [(f, parse_md(f.read_text(encoding="utf-8"))) for f in files]
-    # 按奖项排序
-    def award_of(d):
-        for k, v in d["meta"]:
-            if k == "奖项":
-                return v
-        return "其他"
-    datas.sort(key=lambda x: (award_of(x[1]), -float(
-        next((v.split("/")[0].strip() for k, v in x[1]["meta"] if k == "AI 评审分"), "0") or 0)))
-
-    # 封面
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(160)
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    set_font(p.add_run("北斗奖申报材料"), size=26, bold=True, color=INK)
+    for _ in range(8):
+        para(doc, "", after=0)
+    p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    set_run(p.add_run("北斗奖申报材料评分意见"), size=22, bold=True)
     p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    set_font(p2.add_run("评分意见汇总"), size=26, bold=True, color=ACCENT)
-    p3 = doc.add_paragraph(); p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p3.paragraph_format.space_before = Pt(20)
-    set_font(p3.add_run("共 %d 份材料" % len(datas)), size=12, color=MUTED)
-    p4 = doc.add_paragraph(); p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p4.paragraph_format.space_before = Pt(6)
-    set_font(p4.add_run("分数区间为相对刻度（85/75/65/55），非官方切线"),
-             size=9.5, color=MUTED, italic=True)
+    set_run(p2.add_run("共 %d 份" % len(rows)), size=11, color=GREY)
 
-    # 目录
     doc.add_page_break()
-    add_heading(doc, "目录", 1)
-    cur_award = None
-    for f, d in datas:
-        a = award_of(d)
-        if a != cur_award:
-            cur_award = a
-            pp = doc.add_paragraph()
-            pp.paragraph_format.space_before = Pt(8); pp.paragraph_format.space_after = Pt(2)
-            set_font(pp.add_run(a), size=11, bold=True, color=ACCENT)
-        score = next((v.split("/")[0].strip() for k, v in d["meta"] if k == "AI 评审分"), "")
-        pp = doc.add_paragraph()
-        pp.paragraph_format.space_before = Pt(0); pp.paragraph_format.space_after = Pt(1)
-        pp.paragraph_format.left_indent = Cm(0.5)
-        set_font(pp.add_run(d["title"]), size=9.5, color=INK)
-        set_font(pp.add_run("　　%s 分" % score), size=9.5, bold=True, color=MUTED)
+    h(doc, "目录", before=0)
+    order = {}
+    for r in rows:
+        order.setdefault(r["award"], []).append(r)
+    for award, items in order.items():
+        para(doc, award, size=10.5, bold=True, before=8, after=2)
+        for r in sorted(items, key=lambda x: -x["ai_score"]):
+            para(doc, "    %s　　　%s 分" % (r["name"], r["ai_score"]), size=9.5, after=1)
 
-    # 正文：每份新起一页
-    for f, d in datas:
+    for r in rows:
         doc.add_page_break()
-        build_doc(d, None, doc=doc)
+        build(r, None, doc=doc)
     doc.save(str(out_path))
     return out_path
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="逐项目意见 → Word")
-    ap.add_argument("src", help="含 *.意见.md 的目录")
-    ap.add_argument("--out", default="意见word")
-    ap.add_argument("--merge", action="store_true", help="另存一份合并总册（按奖项分组）")
+    ap = argparse.ArgumentParser(description="逐项目意见 → Word（简洁版）")
+    ap.add_argument("src", help="含 *.score.json 的目录")
+    ap.add_argument("--out", default="意见Word")
+    ap.add_argument("--merge", action="store_true", help="另存一份合并总册")
     a = ap.parse_args()
     src, out = Path(a.src), Path(a.out)
-    files = sorted(src.glob("*.意见.md"))
-    if not files:
-        print("没找到 *.意见.md", file=__import__("sys").stderr)
+    rows = load(src)
+    if not rows:
+        print("没找到 score.json", file=__import__("sys").stderr)
         return 1
     out.mkdir(parents=True, exist_ok=True)
-    made = []
-    for f in files:
-        data = parse_md(f.read_text(encoding="utf-8"))
-        p = out / (f.name.replace(".意见.md", ".docx"))
-        build_doc(data, p)
-        made.append(p.name)
+    for r in rows:
+        build(r, out / (r["_stem"] + ".docx"))
     if a.merge:
-        build_merged(files, out / "北斗奖评分意见汇总.docx")
-        print(json.dumps({"out": str(out), "count": len(made), "merged": "北斗奖评分意见汇总.docx"},
-                         ensure_ascii=False))
-    else:
-        print(json.dumps({"out": str(out), "count": len(made)}, ensure_ascii=False))
+        build_merged(rows, out / "北斗奖评分意见汇总.docx")
+    print(json.dumps({"out": str(out), "count": len(rows), "merged": bool(a.merge)},
+                     ensure_ascii=False))
     return 0
 
 

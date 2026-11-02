@@ -218,7 +218,7 @@ def main() -> int:
     # ---------- 6c. Word 导出 ----------
     print("\n[6c] 逐项目意见导出 Word")
     wdir = TMP / "word"
-    r = run([ROOT / "scripts" / "export_docx.py", advdir, "--out", wdir, "--merge"])
+    r = run([ROOT / "scripts" / "export_docx.py", out, "--out", wdir, "--merge"])
     docs = list(wdir.glob("*.docx")) if wdir.is_dir() else []
     merged = [d for d in docs if "汇总" in d.name]
     rec("生成 Word 文件", r.returncode == 0 and len(docs) >= 2, "%d 个" % len(docs))
