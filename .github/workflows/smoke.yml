@@ -106,4 +106,3 @@ jobs:
           assert grades["replication"] == "D", grades
           assert res["confidence"] in ("高", "中", "低"), res
           print("e2e smoke passed:", res["ai_score"], res["band"], grades)
-Y
