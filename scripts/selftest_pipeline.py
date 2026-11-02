@@ -198,6 +198,23 @@ def main() -> int:
     else:
         rec("Excel 导出", False, r.stderr[-160:])
 
+    # ---------- 6b. 逐项目意见 ----------
+    print("\n[6b] 逐项目意见生成")
+    advdir = TMP / "advice"
+    r = run([ROOT / "scripts" / "report_advice.py", out, "--out", advdir])
+    files = list(advdir.glob("*.意见.md")) if advdir.is_dir() else []
+    ok = r.returncode == 0 and len(files) == 1
+    rec("生成逐项目意见文件", ok, "%d 份" % len(files))
+    if ok:
+        txt = files[0].read_text(encoding="utf-8")
+        # 必须有这几段，且不能是空话
+        need = ["各维度得分与意见", "怎么改", "优先补什么"]
+        missing = [x for x in need if x not in txt]
+        rec("意见含必要段落", not missing, "缺 %s" % missing if missing else "")
+        # 建议不能是同一句重复（早期 bug：全局项挂到每个维度）
+        adv_lines = [l for l in txt.splitlines() if l.startswith("- （") or "怎么改**：" in l]
+        rec("意见不是机械重复", len(set(adv_lines)) >= min(2, len(adv_lines)) if adv_lines else True)
+
     # ---------- 7. batch 全链路 ----------
     print("\n[7] batch 全链路（docx → Excel）")
     bdir = TMP / "batch"; bdir.mkdir()

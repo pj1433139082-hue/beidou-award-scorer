@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # 打包时排除的东西
 EXCLUDE_DIRS = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
-EXCLUDE_FILES = {".DS_Store", "Thumbs.db"}
+# Office 打开文件时留下的锁文件（~$xxx.xlsx）、系统缩略图等，绝不能进包
+EXCLUDE_FILES = {".DS_Store", "Thumbs.db", "desktop.ini"}
+EXCLUDE_PREFIX = ("~$", "._")
 EXCLUDE_SUFFIX = {".pyc", ".pyo"}
 
 # 必须包含（缺了就说明技能不完整）
@@ -96,6 +98,11 @@ def collect_files() -> list[Path]:
         if any(part in EXCLUDE_DIRS for part in rel.parts):
             continue
         if rel.name in EXCLUDE_FILES or rel.suffix in EXCLUDE_SUFFIX:
+            continue
+        if rel.name.startswith(EXCLUDE_PREFIX):
+            continue
+        # 打分产物目录不进分发包（体积大、且是用户自己的数据）
+        if rel.parts and rel.parts[0] in ("dist", "out", "评分结果", "意见", ".scratch"):
             continue
         out.append(rel)
     return out
