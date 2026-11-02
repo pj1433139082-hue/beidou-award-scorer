@@ -114,8 +114,10 @@ def main():
         award = award_of(Path(f.name.replace(".doc.json", "")), a.award, awards, aliases)
         if not award:
             print("[skip] %s：文件名无法判断奖项，请用 --award 指定" % f.name, file=sys.stderr); continue
-        doc = out / (f.stem + ".doc.json") if not a.from_json else f
-        chk = out / (f.stem + ".checks.json")
+        # --from-json 时 f 是 xxx.doc.json，stem 要去掉 .doc 后缀才是材料基名
+        stem = f.name.replace(".doc.json", "") if a.from_json else f.stem
+        doc = f if a.from_json else out / (stem + ".doc.json")
+        chk = out / (stem + ".checks.json")
         if not a.from_json and not doc.is_file():   # 没抽过才抽
             subprocess.run([sys.executable, str(HERE / "extract_report.py"), str(f), "--out", str(out)],
                            check=True, stdout=subprocess.DEVNULL)
@@ -123,14 +125,15 @@ def main():
             subprocess.run([sys.executable, str(HERE / "checks.py"), str(doc), "--award", award,
                             "--rubric", a.rubric, "--out", str(chk)], check=True, stdout=subprocess.DEVNULL)
         c = json.loads(chk.read_text(encoding="utf-8"))
-        row = {"name": f.stem, "award": award, "checks": c["summary"]}
-        jp = out / (f.stem + ".judgments.json")
+        row = {"name": stem, "award": award, "checks": c["summary"]}
+        # judgments 可能就在源目录（from-json 场景），也可能在输出目录
+        jp = (f.parent / (stem + ".judgments.json")) if a.from_json else (out / (stem + ".judgments.json"))
         if jp.exists() and not a.machine_only:
             subprocess.run([sys.executable, str(HERE / "score.py"), str(doc), "--checks", str(chk),
                             "--judgments", str(jp), "--award", award, "--rubric", a.rubric,
                             "--out", str(out)], check=True,
                            stdout=subprocess.DEVNULL)
-            s = json.loads((out / (f.stem + ".score.json")).read_text(encoding="utf-8"))
+            s = json.loads((out / (stem + ".score.json")).read_text(encoding="utf-8"))
             row.update({"ai_score": s["ai_score"], "band": s["band"], "confidence": s["confidence"],
                         "veto": s["veto"]})
         else:
