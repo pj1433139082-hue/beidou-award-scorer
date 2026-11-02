@@ -8,7 +8,7 @@
 数据直接读 score.json + checks.json，能拿到 checks[].evidence 里的原文定位。
 """
 from __future__ import annotations
-import argparse, json
+import argparse, json, re
 from pathlib import Path
 
 try:
@@ -204,7 +204,7 @@ def collect_issues(row: dict) -> list[dict]:
                 # 机检没给定位时，从原文找一句线索句
                 q = find_quote(row.get("_plain", ""), HINTS.get(cid, []))
                 if q:
-                    ev = ["文中原句：" + q]
+                    ev = [q]
             problems.append({
                 "kind": "check", "cid": cid,
                 "text": c.get("detail") or PROBLEM.get(cid, ""),
@@ -238,7 +238,28 @@ def collect_issues(row: dict) -> list[dict]:
         if not fixes and FALLBACK.get(did):
             fixes.append(FALLBACK[did])
 
-        out.append({"dim": dim, "problems": problems, "fixes": fixes[:2],
+        # 去重：封顶原因与机检 detail 常常在说同一件事
+        seen_txt, uniq = set(), []
+        for pr in problems:
+            # 去标点后取前 8 字做键：封顶原因与机检 detail 通常前半句一致
+            key = re.sub(r"[\s　「」【】——，。、：；()（）]", "", pr["text"])[:8]
+            if key in seen_txt:
+                continue
+            seen_txt.add(key)
+            uniq.append(pr)
+
+        # 没有具体问题但确实失分：说明原因是证据强度不足，保持「原文哪里不好 → 怎么改」格式完整
+        if not uniq and round(dim["max"] - dim["score"], 1) > 0.01:
+            g = dim.get("verified_grade") or ""
+            why = {
+                "A": "证据等级 A，但该维度仍因业务条件未完全达成而失分",
+                "B": "证据等级 B：有论证但不够充分，缺少可核验的量化数据",
+                "C": "证据等级 C：论证薄弱，多为定性描述，缺具体数字与佐证",
+                "D": "证据等级 D：几乎没有可引用的证据",
+            }.get(g, "该维度论证不足，失分但未定位到具体原文问题")
+            uniq.append({"kind": "grade", "text": why, "ev": []})
+
+        out.append({"dim": dim, "problems": uniq, "fixes": fixes[:2],
                     "loss": round(dim["max"] - dim["score"], 1)})
     return [x for x in out if x["loss"] > 0.01 or x["problems"]]
 
