@@ -55,6 +55,45 @@ jobs:
       - name: Byte-compile scripts
         run: python -m compileall -q scripts
 
+      - name: Iteration is a gate, not a scored dimension
+        run: |
+          python - <<'PY'
+          import json, sys
+          sys.path.insert(0, "scripts")
+          import score
+
+          rub = json.load(open("assets/rubric.example.json", encoding="utf-8"))
+          spec = rub["awards"]["示例奖C（推广类）"]
+
+          # 1) it must not be a dimension, must not carry points
+          ids = [d["id"] for d in spec["dimensions"]]
+          assert "iteration" not in ids, ids
+          assert sum(d["max"] for d in spec["dimensions"]) == 100
+          assert spec.get("gate_dimension", {}).get("id") == "iteration"
+
+          # 2) a C13 fail must not change the score and must not deduct anything
+          doc = {"name": "t", "source": "t", "plain": "正文" * 50, "stats": {}}
+          judg = {"judgments": {
+              "promotion": {"score": 30, "grade": "B", "quotes": []},
+              "economics": {"score": 30, "grade": "B", "quotes": []},
+              "readiness": {"score": 15, "grade": "B", "quotes": []},
+          }}
+          ok_checks = {"checks": [{"id": "C13", "name": "成果迭代性", "status": "pass",
+                                    "detail": "", "evidence": [], "dims": ["iteration"]}]}
+          bad_checks = {"checks": [{"id": "C13", "name": "成果迭代性", "status": "fail",
+                                     "detail": "未见迭代说明", "evidence": [], "dims": ["iteration"]}]}
+
+          a = score.score_one(doc, ok_checks, judg, rub, "示例奖C（推广类）")
+          b = score.score_one(doc, bad_checks, judg, rub, "示例奖C（推广类）")
+
+          assert a["ai_score"] == b["ai_score"], (a["ai_score"], b["ai_score"])
+          assert a["ai_score"] > 0, a["ai_score"]
+          assert b["veto"] is False and b["veto_pending"] is True
+          assert b["deductions"] == a["deductions"], (a["deductions"], b["deductions"])
+          assert b["disputes"][0]["source"] == "否决项待裁定", b["disputes"][0]
+          print("iteration-as-gate OK: score", a["ai_score"], "->", b["ai_score"], "(unchanged)")
+          PY
+
       - name: Result-iteration detection (anchor + change)
         run: |
           python - <<'PY'
