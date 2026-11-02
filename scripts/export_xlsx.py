@@ -51,19 +51,147 @@ A_TOP = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
 BAND_ORDER = ["一等奖候选", "二等奖候选", "三等奖候选", "入围候选", "待提升"]
 
+# ---------- 修改建议生成规则 ----------
+# 键：维度 id + 失分原因关键词 -> 建议文案
+# 面向申报人：说清"补什么"和"补了能加多少分"
+ADVICE = {
+    "value": [
+        ("C02", "把效益表里的「实际值【已实现】」和「远期目标【规划/在研】」分开填：已兑现的填实际值并附台账截图，没兑现的只填远期目标。现在两者混填，价值性封顶 40%。"),
+        ("C04", "每个已实现效益都要有佐证材料：台账截图、运行日志或核算表，填进「佐证材料（附截图）」列。覆盖率低于 80% 价值性封顶 70%。"),
+        ("C03", "每项效益补上改造前的基准值和对比周期，否则变化率算不出来，别人无法复算。"),
+        ("C05", "正文里的百分比要和表格里的数字对得上（偏差不超过 5 个百分点），否则会被判为数字不自洽。"),
+        ("C16", "把「预计/有望」的表述换成实际发生的量，量化成效描述要能落到具体金额或比例。"),
+    ],
+    "replication": [
+        ("C14", "补一段与原办法的量化对照：改造前后/两种方案的同一指标对比，给出百分比或倍数。"),
+        ("C02", "补充可推广范围的实际数据：已应用厂站数、覆盖区域数，而不是只写定性描述。"),
+    ],
+    "novelty": [
+        ("C14", "补与原有做法的量化对照：同一场景下新旧方案的效果差值（成本、精度、时效），并说明差异来自哪个创新点。"),
+    ],
+    "intelligence": [
+        ("C11", "补模型实验室的线上部署记录、试点厂的生产调用记录，以及不少于 90 天的运行验证数据；三者齐备才能拿满智能化水平分。"),
+    ],
+    "promotion": [
+        ("C06", "补一份推广清单：大区 / 区域 / 水厂逐个列出（要能数出个数），正文写清覆盖了几个大区、几个区域、几个项目。"),
+    ],
+    "economics": [
+        ("C07", "补「计算步骤」表：每一步写清 Excel 公式、计算结果、单位和含义。只给一个总金额无法复算，经济效益封顶。"),
+        ("C08", "同一个金额若在多处出现，确认不是重复计入（如吨水单耗和总费用各算一次）。"),
+    ],
+    "readiness": [
+        ("C12", "写清成果从方案到产品的转化程度：已产品化（有合同/订单/收入）→ 非常符合；只有原型 → 符合；仍在方案 → 一般。补交付形态说明。"),
+    ],
+    "usability": [
+        ("C15", "补集团战略对齐说明（对应十五五/集团战略方向）和当前卡点的具体描述，说明方案如何直接解决该卡点。"),
+    ],
+}
+
+GLOBAL_ADVICE = [
+    ("C09", "把没填的占位符（下划线、XXXX、（文本））全部补实，未填项会被判为材料未完成。"),
+    ("C17", "插入关键运行界面、台账、报告的截图并加说明，只放图不放说明不构成证据。"),
+]
+
+
+# 按机检编号 → 建议文案。键是 checks.json 里的 Cxx 编号。
+ADVICE_BY_CHECK = {
+    "C02": "把效益表的「实际值【已实现】」与「远期目标【规划/在研】」分开填：已兑现的填实际值并附台账截图，未兑现的只填远期目标。两者混填，价值性最高只能拿 40%。",
+    "C03": "每项效益补上改造前的基准值和对比周期。没有基线，变化率无法复算，等于没有说服力。",
+    "C04": "每个已实现效益都要配佐证材料（台账截图 / 运行日志 / 核算表），填进「佐证材料（附截图）」列。覆盖率低于 80% 价值性封顶 70%。",
+    "C05": "正文里的百分比要与表格数字一致（偏差不超过 5 个百分点），否则会被判为数字不自洽。",
+    "C08": "同一金额若在多处出现，确认没有重复计入（如吨水单耗与总费用各算一次）。",
+    "C09": "把没填的占位符（下划线、XXXX、（文本））全部补实，未填项会被判为材料未完成。",
+    "C11": "补模型实验室线上部署记录、试点厂生产调用记录，以及不少于 90 天的运行验证；三者齐备才能拿满智能化水平分。",
+    "C12": "写清从方案到产品的转化程度：已产品化（有合同/订单/收入）→非常符合；仅原型→符合；仍在方案→一般。",
+    "C13": "补一段「相较上次参赛版本」的迭代说明：改了什么、指标提升多少。没有这段，成果迭代性这项会被判为否决项待裁定。",
+    "C14": "补与原办法的量化对照：同一场景下新旧方案的效果差值（成本、精度、时效），并说明差异来自哪个创新点。",
+    "C15": "补集团战略对齐说明（对应十五五 / 集团战略方向）与当前卡点的具体描述，说明方案如何直接解决该卡点。",
+    "C16": "把「预计 / 有望」换成实际发生的量：量化成效要能落到具体金额或比例。",
+    "C17": "插入关键运行界面、台账、报告截图并加说明；只放图不说明不构成证据。",
+    "C06": "补一份推广清单：大区 / 区域 / 水厂逐个列出（要能数出个数），正文写清覆盖几个大区、几个区域、几个项目。",
+    "C07": "补「计算步骤」表：每步写清公式、结果、单位、含义。只给总金额无法复算，经济效益拿不到高分。",
+    "C18": "确认三个子项的证据齐全：推广案例佐证、经济测算过程、产品形态说明。",
+    "C19": "补齐专属模板的六段：实施背景、模型应用、业务价值、ROI 核算、下一步计划、量化数据。",
+    "C20": "ROI 要有可复算的投入与收益两段，并配足量化数字。",
+}
+
+# 维度 → 相关的机检编号（用于把检查结果映射到维度）
+DIM_CHECKS = {
+    "value": ["C02", "C03", "C04", "C05", "C08", "C16"],
+    "replication": ["C06", "C14", "C09"],
+    "novelty": ["C14", "C09"],
+    "intelligence": ["C11", "C17"],
+    "promotion": ["C06", "C18", "C07"],
+    "economics": ["C07", "C08", "C05"],
+    "readiness": ["C12"],
+    "usability": ["C15"],
+}
+
+
+def build_advice(dim: dict, checks: list, gates: list, deductions: list) -> str:
+    """按该维度命中的机检编号，给出可执行的修改建议（最多 3 条，按优先级）。
+
+    编号来源（按可靠性排序）：
+      1. caps_and_gates[].check —— 该维度的封顶由哪条机检造成（最准）
+      2. deductions[].check     —— 固定扣分来自哪条机检
+      3. checks.json 里 status 为 warn/fail 且 dims 含本维度的检查
+    """
+    dim_id = dim.get("id")
+    hit = []
+    for g in gates or []:
+        if g.get("dim") == dim_id and g.get("check"):
+            hit.append(g["check"])
+    for d in deductions or []:
+        if d.get("check"):
+            hit.append(d["check"])
+    for c in checks or []:
+        if c.get("status") in ("warn", "fail"):
+            cdims = c.get("dims") or []
+            if dim_id in cdims:
+                hit.append(c.get("id"))
+            elif not cdims and c.get("id") in ("C09", "C17"):
+                hit.append(c.get("id"))   # 全局项（占位符/截图）作为兜底提醒
+    out = []
+    for cid in hit:
+        txt = ADVICE_BY_CHECK.get(cid)
+        if txt and txt not in out:
+            out.append(txt)
+    # 证据等级被下调也算失分，给一条针对性建议
+    if not out and dim.get("claimed_grade") != dim.get("verified_grade"):
+        out.append("该维度引文没全部通过核验：把引文换成材料里的原句（逐字、不改写），"
+                   "并补到 2 句以上，否则证据等级会被压到 C 及以下。")
+    if not out:
+        if dim.get("score", 0) < dim.get("max", 0) * 0.8:
+            out.append("该维度论证偏弱：补具体数据与佐证，讲清「做了什么—产生了什么—怎么验证的」，"
+                       "并给出一组可复算的数字。")
+        else:
+            out.append("该维度已基本达标，若要更稳，建议再补一条与原办法的量化对照。")
+    return " ".join(out[:3])
+
+
 
 def band_fill(band: str) -> str | None:
+    """区间列不再大面积上色——只留很淡的提示色，避免整张表花掉。"""
     if band.startswith("否决"):
         return BAD_BG
-    if "一等奖" in band:
-        return GOOD_BG
-    if "二等奖" in band:
-        return "E0F2FE"
-    if "三等奖" in band:
-        return "FEF9C3"
     if "待提升" in band:
-        return BAD_BG
+        return "FFF7ED"
     return None
+
+
+def band_font(band: str):
+    """区间用字体色区分，视觉更轻。"""
+    if band.startswith("否决"):
+        return Font(name="Microsoft YaHei", size=10, bold=True, color="B91C1C")
+    if "一等奖" in band:
+        return Font(name="Microsoft YaHei", size=10, bold=True, color="15803D")
+    if "二等奖" in band:
+        return Font(name="Microsoft YaHei", size=10, bold=True, color="1D4ED8")
+    if "三等奖" in band:
+        return Font(name="Microsoft YaHei", size=10, bold=True, color="A16207")
+    if "待提升" in band:
+        return Font(name="Microsoft YaHei", size=10, color="9A3412")
+    return Font(name="Microsoft YaHei", size=10, color=INK)
 
 
 def short(text: str, n: int = 60) -> str:
@@ -83,6 +211,14 @@ def collect(src: Path) -> list[dict]:
         if "dimensions" not in d:
             continue
         d["_file"] = f
+        cf = f.with_name(f.name.replace(".score.json", ".checks.json"))
+        if cf.is_file():
+            try:
+                d["_checks"] = json.loads(cf.read_text(encoding="utf-8")).get("checks", [])
+            except Exception:
+                d["_checks"] = []
+        else:
+            d["_checks"] = []
         out.append(d)
     return out
 
@@ -120,6 +256,10 @@ def build_summary(wb, rows):
             cell = ws.cell(rw, c, dname)
             cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
             cell.alignment = A_MID; cell.border = BORDER
+        for c, h in ((6 + len(g["dims"]), "需关注"), (7 + len(g["dims"]), "修改建议")):
+            cell = ws.cell(rw, c, h)
+            cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
+            cell.alignment = A_MID; cell.border = BORDER
         ws.cell(rw, 1, "%s（%d 份）" % (g["award"], len(g["rows"])))
         ws.cell(rw, 1).font = F_BOLD
         ws.cell(rw, 1).alignment = A_LEFT
@@ -140,8 +280,12 @@ def build_summary(wb, rows):
                 d = next((x for x in r["dimensions"] if x["name"] == dname), None)
                 cell = ws.cell(rw, c, ("%s/%s" % (d["score"], d["max"])) if d else "—")
                 cell.alignment = A_MID
-                if d and d["score"] < d["max"] * 0.6:
-                    cell.fill = PatternFill("solid", fgColor=WARN_BG)
+                if d:
+                    ratio = d["score"] / d["max"] if d["max"] else 1
+                    if ratio < 0.6:
+                        cell.fill = PatternFill("solid", fgColor=WARN_BG)
+                    elif ratio >= 0.85:
+                        cell.fill = PatternFill("solid", fgColor="DCFCE7")
             risks = []
             if r.get("veto"):
                 risks.append("否决")
@@ -154,19 +298,40 @@ def build_summary(wb, rows):
                 risks.append("扣%d" % sum(x["points"] for x in r["deductions"]))
             cell = ws.cell(rw, 6 + len(g["dims"]), "、".join(risks) or "—")
             cell.alignment = A_MID
+            # 修改建议：按失分从多到少，逐维度给出要点（每维度取第一条建议）
+            items = []
+            for d in sorted(r["dimensions"], key=lambda x: (x["max"] - x["score"]), reverse=True):
+                if d["max"] - d["score"] <= 0.01:
+                    continue
+                a_txt = build_advice(d, r.get("_checks") or [], r.get("caps_and_gates") or [], r.get("deductions") or [])
+                if not a_txt:
+                    continue
+                # 取该维度建议的第一句（以句号/中文句号切）
+                parts = re.split(r"(?<=。)", a_txt)
+                first = next((p.strip() for p in parts if p.strip()), "")
+                first = re.split(r"[，：]", first)[0] if len(first) > 34 else first
+                if first and first not in items:
+                    items.append("[%s] %s" % (d["name"], first))
+                if len(items) >= 2:
+                    break
+            acell = ws.cell(rw, 7 + len(g["dims"]), "；".join(items) or "—")
+            acell.alignment = A_LEFT
             bf = band_fill(r["band"])
             if bf:
                 ws.cell(rw, 4).fill = PatternFill("solid", fgColor=bf)
+            ws.cell(rw, 4).font = band_font(r["band"])
             if risks:
                 cell.fill = PatternFill("solid", fgColor=WARN_BG)
-            for c in range(1, 7 + len(g["dims"])):
+            # 行高固定，别让长建议把行撑爆
+            ws.row_dimensions[rw].height = 30
+            for c in range(1, 8 + len(g["dims"])):
                 ws.cell(rw, c).font = F_CELL
                 ws.cell(rw, c).border = BORDER
             rw += 1
         rw += 1   # 组间留空
 
     maxdim = max((len(g["dims"]) for g in groups), default=0)
-    widths = [32, 10, 8, 20, 9] + [13] * maxdim + [18]
+    widths = [30, 8, 7, 17, 8] + [11] * maxdim + [15, 62]
     for c, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(c)].width = w
     ws.row_dimensions[hr].height = 24
@@ -182,7 +347,7 @@ def build_detail(wb, rows):
     ws["A2"].font = F_SMALL
     ws.merge_cells("A1:H1"); ws.merge_cells("A2:H2")
 
-    head = ["申报材料", "维度", "满分", "得分", "得分率", "证据等级", "失分原因", "原文引文"]
+    head = ["申报材料", "维度", "满分", "得分", "得分率", "证据等级", "失分原因", "原文引文", "修改建议"]
     hr = 4
     for c, h in enumerate(head, 1):
         cell = ws.cell(hr, c, h)
@@ -195,6 +360,10 @@ def build_detail(wb, rows):
             reasons = []
             if d.get("cap_reason"):
                 reasons.append(d["cap_reason"])
+            # 该维度命中的机检（即使没造成封顶，也要显示）
+            for c in r.get("_checks") or []:
+                if c.get("status") in ("warn", "fail") and d["id"] in (c.get("dims") or []):
+                    reasons.append("%s %s" % (c.get("id"), c.get("name")))
             if d.get("claimed_grade") != d.get("verified_grade"):
                 reasons.append("证据等级 %s→%s（引文未全部核验）" % (d.get("claimed_grade"), d.get("verified_grade")))
             quotes = "；".join(d.get("quotes_verified") or [])
@@ -205,12 +374,14 @@ def build_detail(wb, rows):
                     ("%s（%s）" % (x.get("quote", ""), x.get("why", ""))) if isinstance(x, dict) else str(x)
                     for x in rejected)
                 quotes = (quotes + "；" if quotes else "") + "【未通过核验】" + rej_txt
+            advice_txt = build_advice(d, r.get("_checks") or [], r.get("caps_and_gates") or [], r.get("deductions") or [])
             vals = [
                 short(r["name"], 28), d["name"], d["max"], d["score"],
                 ("%.0f%%" % (d["score"] / d["max"] * 100)) if d["max"] else "—",
                 d.get("verified_grade", "—"),
                 "；".join(reasons) or "—",
                 short(quotes, 80) if quotes else "—",
+                short(advice_txt, 150) or "—",
             ]
             for c, v in enumerate(vals, 1):
                 cell = ws.cell(rw, c, v)
@@ -223,7 +394,7 @@ def build_detail(wb, rows):
                 ws.cell(rw, 8).fill = PatternFill("solid", fgColor=BAD_BG)
             rw += 1
 
-    for c, w in enumerate([28, 12, 7, 7, 8, 9, 42, 60], 1):
+    for c, w in enumerate([28, 12, 7, 7, 8, 9, 42, 60, 70], 1):
         ws.column_dimensions[get_column_letter(c)].width = w
     ws.row_dimensions[hr].height = 26
     ws.freeze_panes = ws.cell(hr + 1, 1)

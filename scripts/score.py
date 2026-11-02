@@ -76,31 +76,31 @@ def grade_cap(verified, claimed):
 def apply_machine(checks, awards_caps):
     caps, deductions, gates = {}, [], []
     by_id = {c["id"]: c for c in checks}
-    def cap(dim, ratio, why):
+    def cap(dim, ratio, why, cid=None):
         caps[dim] = min(caps.get(dim, 1.0), ratio)
-        gates.append({"dim": dim, "type": "cap", "to": ratio, "why": why})
-    def deduct(points, why, rule):
-        deductions.append({"points": points, "why": why, "rule": rule})
+        gates.append({"dim": dim, "type": "cap", "to": ratio, "why": why, "check": cid})
+    def deduct(points, why, rule, cid=None):
+        deductions.append({"points": points, "why": why, "rule": rule, "check": cid})
     c = lambda i: by_id.get(i, {"status": "na", "detail": ""})
     st = lambda i: c(i)["status"]
 
-    if st("C02") == "fail": cap("value", 0.40, "「实际值【已实现】」全空：效益全为规划，价值性最高 40%")
-    if st("C02") == "warn": cap("value", 0.75, "仅个别效益填了已实现值：价值性封顶 75%")
-    if st("C03") == "warn": cap("value", 0.85, "存在有实际值无基准值的行，变化率不可复算")
-    if st("C04") == "fail": cap("value", 0.70, "已实现效益普遍缺佐证材料")
-    if st("C04") == "warn": cap("value", 0.85, "部分已实现效益缺佐证材料")
-    if st("C05") == "warn": deduct(2, "变化率自述与复算不符（偏差>5pp）", "D2 正文数字与测算不一致")
-    if st("C08") == "warn": deduct(3, "同一金额多处出现，存在重复计入风险", "D1 重复计入")
-    if st("C09") == "warn": deduct(2, "存在未填写占位（下划线/XXXX/（文本））", "材料完成度")
-    if st("C11") == "fail": cap("intelligence", 0.40, "未见模型实验室部署或试点厂生产调用证据")
-    if st("C11") == "warn": cap("intelligence", 0.70, "实验室/试点厂证据不全，或缺 >=90 天运行验证")
-    if st("C12") == "warn": cap("readiness", 0.65, "产品就绪度未达「已实现产品转化」")
-    if st("C12") == "fail": cap("readiness", 0.45, "未能识别产品形态与转化程度")
-    if st("C14") == "fail": cap("novelty", 0.60, "未见与原有办法的量化对照，创新性封顶 60%")
-    if st("C14") == "warn": cap("novelty", 0.80, "有对比表述但缺量化对照")
-    if st("C15") == "warn": cap("usability", 0.80, "战略对齐或卡点描述缺一项")
-    if st("C16") == "warn": cap("value", 0.85, "预计性表述偏多，包装风险")
-    if st("C17") == "fail": deduct(2, "全文无图片/截图证据", "D4 截图缺失")
+    if st("C02") == "fail": cap("value", 0.40, "「实际值【已实现】」全空：效益全为规划，价值性最高 40%", "C02")
+    if st("C02") == "warn": cap("value", 0.75, "仅个别效益填了已实现值：价值性封顶 75%", "C02")
+    if st("C03") == "warn": cap("value", 0.85, "存在有实际值无基准值的行，变化率不可复算", "C03")
+    if st("C04") == "fail": cap("value", 0.70, "已实现效益普遍缺佐证材料", "C04")
+    if st("C04") == "warn": cap("value", 0.85, "部分已实现效益缺佐证材料", "C04")
+    if st("C05") == "warn": deduct(2, "变化率自述与复算不符（偏差>5pp）", "D2 正文数字与测算不一致", "C05")
+    if st("C08") == "warn": deduct(3, "同一金额多处出现，存在重复计入风险", "D1 重复计入", "C08")
+    if st("C09") == "warn": deduct(2, "存在未填写占位（下划线/XXXX/（文本））", "材料完成度", "C09")
+    if st("C11") == "fail": cap("intelligence", 0.40, "未见模型实验室部署或试点厂生产调用证据", "C11")
+    if st("C11") == "warn": cap("intelligence", 0.70, "实验室/试点厂证据不全，或缺 >=90 天运行验证", "C11")
+    if st("C12") == "warn": cap("readiness", 0.65, "产品就绪度未达「已实现产品转化」", "C12")
+    if st("C12") == "fail": cap("readiness", 0.45, "未能识别产品形态与转化程度", "C12")
+    if st("C14") == "fail": cap("novelty", 0.60, "未见与原有办法的量化对照，创新性封顶 60%", "C14")
+    if st("C14") == "warn": cap("novelty", 0.80, "有对比表述但缺量化对照", "C14")
+    if st("C15") == "warn": cap("usability", 0.80, "战略对齐或卡点描述缺一项", "C15")
+    if st("C16") == "warn": cap("value", 0.85, "预计性表述偏多，包装风险", "C16")
+    if st("C17") == "fail": deduct(2, "全文无图片/截图证据", "D4 截图缺失", "C17")
     if awards_caps and st("C13") == "fail":
         # 「成果迭代性」是**否决项，不是加分项**（用户 2026-11-02 确认）——
         # 所以它不进入 dimensions、不占分值、不加分。
@@ -108,7 +108,7 @@ def apply_machine(checks, awards_caps):
         # P12 明确 AI 的职责是"生成争议点清单，辅助答辩追问"，而非单方面定案。
         # 因此：分值不受影响，只置顶争议点 + 标注待裁定，由人和综合审议裁定。
         # 不额外扣分：官方未给否决项的扣分幅度，任何数字都是我们编的。
-        gates.append({"dim": "iteration", "type": "veto_pending",
+        gates.append({"dim": "iteration", "type": "veto_pending", "check": "C13",
                       "to": 0, "why": "成果迭代性未见说明：否决项，需人工/综合审议确认"})
     return caps, deductions, gates
 
