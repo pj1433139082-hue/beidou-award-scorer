@@ -79,6 +79,12 @@ jobs:
           print("installer OK")
           PY
 
+      - name: End-to-end pipeline selftest
+        run: python scripts/selftest_pipeline.py
+
+      - name: Real-rubric structural checks
+        run: python scripts/selftest_real.py
+
       - name: Byte-compile scripts
         run: python -m compileall -q scripts
 

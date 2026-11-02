@@ -400,6 +400,19 @@ def summarize(checks):
     return {"pass": c.get("pass", 0), "warn": c.get("warn", 0), "fail": c.get("fail", 0),
             "na": c.get("na", 0), "total": len(checks)}
 
+def _load_json(path: str, what: str):
+    """读 JSON 文件，缺失或损坏都给可读错误，不抛 traceback。"""
+    p = Path(path)
+    if not p.is_file():
+        print("错误：找不到%s文件：%s" % (what, p), file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print("错误：%s文件不是合法 JSON（%s）：\n  %s" % (what, e.msg, p), file=sys.stderr)
+        raise SystemExit(2)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="机检 doc.json -> checks.json")
     ap.add_argument("doc_json")
@@ -407,8 +420,8 @@ def main() -> int:
     ap.add_argument("--rubric", default=str(_default_rubric()))
     ap.add_argument("--out")
     a = ap.parse_args()
-    doc = json.loads(Path(a.doc_json).read_text(encoding="utf-8"))
-    rub = json.loads(Path(a.rubric).read_text(encoding="utf-8"))
+    doc = _load_json(a.doc_json, "材料 doc.json")
+    rub = _load_json(a.rubric, "评分卡")
     checks = run(doc, a.award, rub)
     res = {"source": doc["source"], "name": doc["name"], "award": a.award,
            "summary": summarize(checks), "checks": checks}

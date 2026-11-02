@@ -21,6 +21,10 @@ UNSCORED = -1.0
 class NoOnsiteError(Exception):
     """给不设现场答辩的奖项传了 --onsite。"""
 
+
+class UnknownAwardError(Exception):
+    """奖项名不在评分卡里。"""
+
 def _default_rubric():
     """默认评分卡：优先 rubric.json，没有就用 rubric.example.json。"""
     assets = Path(__file__).resolve().parents[1] / "assets"
@@ -113,7 +117,15 @@ def apply_machine(checks, awards_caps):
     return caps, deductions, gates
 
 def score_one(doc, checks, judgments, rubric, award, onsite=None):
-    spec = rubric["awards"][award]
+    awards = rubric.get("awards") or {}
+    if award not in awards:
+        raise UnknownAwardError(
+            "评分卡里没有「%s」这个奖项。\n"
+            "  当前评分卡可用奖项：%s\n"
+            "  若你在用公开版的示例卡（rubric.example.json），它只含示例奖项；\n"
+            "  请用 --rubric 指向你自己的 rubric.json。" % (
+                award, "、".join(awards.keys()) or "（空）"))
+    spec = awards[award]
     if onsite is not None and spec.get("no_onsite"):
         raise NoOnsiteError(
             "%s 不设现场评审（规则原文：成果推广赛道不设答辩环节，采用 AI+人工辅助方式评定）。\n"
@@ -280,6 +292,19 @@ def render_md(res):
     A("")
     return "\n".join(L)
 
+def _load_json(path: str, what: str):
+    """读 JSON，缺失或损坏给可读错误。"""
+    p = Path(path)
+    if not p.is_file():
+        print("错误：找不到%s文件：%s" % (what, p), file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print("错误：%s文件不是合法 JSON（%s）：\n  %s" % (what, e.msg, p), file=sys.stderr)
+        raise SystemExit(2)
+
+
 def main():
     ap = argparse.ArgumentParser(description="北斗奖申报材料评分")
     ap.add_argument("doc_json")
@@ -290,13 +315,16 @@ def main():
     ap.add_argument("--rubric", default=str(_default_rubric()))
     ap.add_argument("--out", default=".")
     a = ap.parse_args()
-    doc = json.loads(Path(a.doc_json).read_text(encoding="utf-8"))
-    checks = json.loads(Path(a.checks).read_text(encoding="utf-8"))
-    judg = json.loads(Path(a.judgments).read_text(encoding="utf-8"))
-    rub = json.loads(Path(a.rubric).read_text(encoding="utf-8"))
+    doc = _load_json(a.doc_json, "材料 doc.json")
+    checks = _load_json(a.checks, "机检结果 checks.json")
+    judg = _load_json(a.judgments, "评审判断 judgments.json")
+    rub = _load_json(a.rubric, "评分卡")
     try:
         res = score_one(doc, checks, judg, rub, a.award, a.onsite)
     except NoOnsiteError as exc:
+        print("错误：" + str(exc), file=sys.stderr)
+        return 2
+    except UnknownAwardError as exc:
         print("错误：" + str(exc), file=sys.stderr)
         return 2
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
