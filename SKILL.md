@@ -73,7 +73,7 @@ Award names are whatever keys your rubric defines; `--award` must match one of t
 | C12 product readiness | warn / fail | readiness capped at 0.65 / 0.45 |
 | C14 novelty contrast | fail / warn | novelty capped at 0.60 / 0.80 |
 | C13 result iteration (award-specific) | warn | treated as "needs confirmation" (mentions iteration but no comparison anchor) — **does not trigger the veto** |
-| C13 result iteration (award-specific) | fail | **veto pending review** — dimension zeroed + dispute pinned to top; **total score is NOT zeroed**, band reads "pending review" |
+| C13 result iteration (award-specific) | fail | **veto pending review** — **the score is entirely unaffected** (iteration is not a dimension: it carries no points, adds nothing, deducts nothing); only the dispute is pinned to the top and the band is annotated "pending review" |
 
 Fixed deductions (D1 duplicate benefit −3, D2 number mismatch −2, D3 missing baseline −2, D4 missing screenshots −2, leftover placeholders −2) apply to the subtotal.
 
@@ -105,7 +105,9 @@ lists "one-way input/output, no means of re-confirmation" as a known weakness to
 
 So this tool **escalates instead of unilaterally failing a submission**: the dimension is zeroed (that zero *is* the
 penalty), the dispute is pinned to the top of the list, and the band is annotated "pending review".
-No extra points are invented, because the source material never states a deduction size for a veto item. To restore a hard veto, change `veto_pending` back to `veto` in `scripts/score.py`.
+No extra points are invented, because the source material never states a deduction size for a veto item.
+Iteration is a gate, not a dimension: whether a submission scores 66 or 48 has nothing to do with it.
+Whether the submission is eliminated is decided by the panel after follow-up questioning. To restore a hard veto, change `veto_pending` back to `veto` in `scripts/score.py`.
 
 ## Two cases that produce no score
 
