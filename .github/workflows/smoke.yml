@@ -34,6 +34,35 @@ jobs:
       - name: Byte-compile scripts
         run: python -m compileall -q scripts
 
+      - name: Result-iteration detection (anchor + change)
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          import checks
+
+          rub = {"awards": {"示例奖C（推广类）": {"profile": {"product": True}}}}
+          def judge(text):
+              d = {"name": "t", "source": "t", "plain": text, "stats": {}, "blocks": []}
+              return checks.c13_iteration(d, "示例奖C（推广类）", rub)["status"]
+
+          expect = [
+              ("相比第七届参赛版本，本届新增一表多点采样。", "pass"),
+              ("相较于过去获奖版本，本次在部署架构上做了重构。", "pass"),
+              ("在往届方案基础上，本次对算法做了升级。", "pass"),
+              ("相比上届版本，本次对控制算法进行优化。", "pass"),
+              ("本项目进行了迭代。", "warn"),
+              ("本年度对系统进行了迭代推广。", "warn"),
+              ("体现了平台对人员工作安排优化的支持。", "fail"),
+              ("推广范围由项目应用拓展至跨大区应用。", "fail"),
+          ]
+          bad = [(t, judge(t), e) for t, e in expect if judge(t) != e]
+          for t, got, exp in bad:
+              print("expected", exp, "got", got, "for", t)
+          assert not bad, f"{len(bad)} iteration-detection cases wrong"
+          print("result-iteration detection OK")
+          PY
+
       - name: Veto is pending, not fatal
         run: |
           python - <<'PY' 2>/dev/null || python -c "import sys,subprocess;sys.exit(0)"

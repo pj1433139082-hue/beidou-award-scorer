@@ -234,16 +234,53 @@ def c12_product_readiness(doc, award, rub):
     return R("C12", "产品就绪度证据", st, "识别到：" + (lvl or "无明确表述"), dims=["readiness"], rule="G5")
 
 def c13_iteration(doc, award, rub):
+    """成果迭代性：必须点明"相比上一版本/上次参赛"的实质变化。
+
+    判定需要两个要素同时成立（且相距不远，避免全篇分散命中）：
+      ① 对比锚点：指向过去的参赛版本（上一届/往届/原版本/第N届(N<本届)…）
+      ② 变化内容：迭代/升级/新增/改进/重构… 等实质变更表述
+    只出现"迭代/升级"而没有对比对象的，只能算自述，降 warn。
+    """
     if not profile(award, rub).get("product"):
         return R("C13", "成果迭代性（否决项）", "na", "该奖项未启用成果迭代性核查", dims=[])
     text = doc["plain"]
-    strong = re.search(r"(相较上一届|较上次参赛|相比上次参赛|较往届|版本升级|迭代升级|迭代推广)", text)
-    weak = re.search(r"(迭代|升级)", text)
-    if strong or (weak and re.search(r"(上一届|上次参赛|往届|原版本|前版)", text)):
-        return R("C13", "成果迭代性（否决项）", "pass", "有「%s」表述，可支撑成果迭代性" % (strong.group(0) if strong else weak.group(0)), dims=["iteration"])
-    if weak:
-        return R("C13", "成果迭代性（否决项）", "warn", "出现「%s」但未点明相较哪一版本的升级，需人工确认" % weak.group(0), dims=["iteration"], rule="金火炬-否决项")
-    return R("C13", "成果迭代性（否决项）", "fail", "未见相较上次参赛版本的迭代说明——金火炬为否决项", dims=["iteration"], rule="金火炬-否决项")
+
+    # ① 对比锚点：只认"过去"，本届（第八届）不算
+    ANCHOR = (r"(?:上一届|上届|上次参赛|往届|历届|过去获奖版本|此前获奖|"
+              r"原版本|前版|原有版本|此前版本|上一版本|既有版本|原方案|"
+              r"第[一二三四五六七]届)")
+    # ② 变化内容
+    # 注意：不把"拓展/扩展"算作变更词——它们在申报材料里多用于"推广范围拓展至…"，
+    # 与"相比上一版本的迭代"无关，放进去会误判。
+    # "优化/改进"在申报材料里也常用于"效率优化""工作安排优化"，需要带技术宾语才算版本迭代
+    CHANGE = (r"(?:迭代|升级|重构|改造|替换|新增|加入|引入|上线|"
+              r"[\u4e00-\u9fa5]{0,4}(?:功能|算法|模型|架构|方案|程序|逻辑|系统|设备|工艺|结构|性能)"
+              r"[\u4e00-\u9fa5]{0,3}(?:优化|改进|增强|完善|提升))")
+
+    anchors = [m for m in re.finditer(ANCHOR, text)]
+    changes = [m for m in re.finditer(CHANGE, text)]
+
+    if not changes:
+        return R("C13", "成果迭代性（否决项）", "fail",
+                 "全文未见任何迭代/升级/新增/改进类表述——无法支撑成果迭代性",
+                 dims=["iteration"], rule="金火炬-否决项")
+
+    # 锚点与变化相邻（±100 字）才算说清了"相比谁、变了什么"
+    if anchors:
+        for a in anchors:
+            near = [c for c in changes if abs(c.start() - a.start()) <= 100]
+            if near:
+                ctx = text[max(0, min(a.start(), near[0].start()) - 20):
+                           max(a.start(), near[0].start()) + 90].replace("\n", " ")
+                return R("C13", "成果迭代性（否决项）", "pass",
+                         "点明了「%s」与「%s」的对应关系" % (a.group(0), near[0].group(0)),
+                         evidence=["…" + ctx.strip()[:110] + "…"], dims=["iteration"])
+
+    # 有变化表述但没有对比对象 → 自述，交人工确认
+    ctx = text[max(0, changes[0].start() - 40):changes[0].start() + 80].replace("\n", " ")
+    return R("C13", "成果迭代性（否决项）", "warn",
+             "出现「%s」但未点明相较哪一版本，属于自述，需人工确认" % changes[0].group(0),
+             evidence=["…" + ctx.strip()[:110] + "…"], dims=["iteration"], rule="金火炬-否决项")
 
 def c14_novelty_compare(doc, award, rub):
     text = doc["plain"]

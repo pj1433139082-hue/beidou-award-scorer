@@ -72,11 +72,29 @@ Award names are whatever keys your rubric defines; `--award` must match one of t
 | C11 lab & trial-plant evidence | fail / warn | intelligence capped at 0.40 / 0.70 |
 | C12 product readiness | warn / fail | readiness capped at 0.65 / 0.45 |
 | C14 novelty contrast | fail / warn | novelty capped at 0.60 / 0.80 |
-| C13 result iteration (award-specific) | fail | **veto pending review** — dimension zeroed + 5-point deduction + dispute pinned to top; **total score is NOT zeroed**, band reads "pending review" |
+| C13 result iteration (award-specific) | warn | treated as "needs confirmation" (mentions iteration but no comparison anchor) — **does not trigger the veto** |
+| C13 result iteration (award-specific) | fail | **veto pending review** — dimension zeroed + dispute pinned to top; **total score is NOT zeroed**, band reads "pending review" |
 
 Fixed deductions (D1 duplicate benefit −3, D2 number mismatch −2, D3 missing baseline −2, D4 missing screenshots −2, leftover placeholders −2) apply to the subtotal.
 
 Check IDs and their award scoping live in `scripts/checks.py`; edit that file and the rubric together when changing an award's criteria.
+
+## How result iteration (C13) is judged
+
+**Every project must supply an iteration statement** — no exemption for first-time entrants.
+
+A `pass` needs two elements within 100 characters of each other:
+1. **Comparison anchor** pointing at a past entry: 上一届/上届/往届/历届/过去获奖版本/原版本/原方案/第N届 (N < current). **The current edition does not count.**
+2. **Change content**: 迭代/升级/重构/改造/替换/新增/加入/引入/上线, or a technical object followed by 优化/改进/增强/完善/提升 (e.g. "控制算法进行优化").
+
+| Result | Meaning |
+|---|---|
+| pass | both elements matched |
+| warn | change mentioned but no anchor — self-reported, needs human confirmation, **no veto** |
+| fail | no change wording at all — iteration cannot be substantiated |
+
+"拓展/扩展" are excluded (they usually mean "promotion scope expanded", not a version change), and
+"优化/改进" need a technical object so that "人员工作安排优化" is not mistaken for iteration.
 
 ## Why a veto does not zero the score
 
@@ -85,9 +103,9 @@ belongs to a review panel (a >10% divergence between human and AI scoring goes t
 the AI's job is to *produce a dispute list that drives follow-up questioning* — the source material itself
 lists "one-way input/output, no means of re-confirmation" as a known weakness to fix.
 
-So this tool **deducts and escalates instead of unilaterally failing a submission**: the dimension is
-zeroed, 5 points are deducted, the dispute is pinned to the top of the list, and the band is annotated
-"pending review". To restore a hard veto, change `veto_pending` back to `veto` in `scripts/score.py`.
+So this tool **escalates instead of unilaterally failing a submission**: the dimension is zeroed (that zero *is* the
+penalty), the dispute is pinned to the top of the list, and the band is annotated "pending review".
+No extra points are invented, because the source material never states a deduction size for a veto item. To restore a hard veto, change `veto_pending` back to `veto` in `scripts/score.py`.
 
 ## Two cases that produce no score
 

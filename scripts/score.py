@@ -104,11 +104,16 @@ def apply_machine(checks, awards_caps):
         caps["iteration"] = 0.0
         gates.append({"dim": "iteration", "type": "veto_pending",
                       "to": 0, "why": "成果迭代性未见说明：按否决项处理，但需人工/综合审议确认"})
-        deduct(5, "成果迭代性未见相较上次参赛版本的说明（否决项待裁定）", "金火炬-否决项")
+        # 不对"否决项"自造扣分：官方未给否决项的扣分幅度，任何数字都是我们编的。
+        # 该维度已归零（见上），惩罚由 dims 传递，不再额外扣分。
     return caps, deductions, gates
 
 def score_one(doc, checks, judgments, rubric, award, onsite=None):
     spec = rubric["awards"][award]
+    if onsite is not None and spec.get("no_onsite"):
+        raise SystemExit(
+            "错误：%s 不设现场评审（规则原文：成果推广赛道不设答辩环节，采用 AI+人工辅助方式评定）。\n"
+            "      不接受 --onsite；该奖项不参与现场 75%% + AI 25%% 合成。去掉 --onsite 重跑。" % award)
     plain_norm = norm(doc["plain"])
     caps, deductions, gates = apply_machine(checks["checks"], [award])
 
