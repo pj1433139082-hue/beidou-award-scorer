@@ -79,6 +79,9 @@ jobs:
           print("installer OK")
           PY
 
+      - name: Install runtime dependencies
+        run: python -m pip install --quiet python-docx PyMuPDF openpyxl
+
       - name: End-to-end pipeline selftest
         run: python scripts/selftest_pipeline.py
 

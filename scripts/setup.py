@@ -6,9 +6,10 @@
   python scripts/setup.py            # 只体检，缺什么报什么
   python scripts/setup.py --install  # 体检 + 自动安装缺失依赖
 
-依赖只有两个（都在 PyPI）：
+依赖（都在 PyPI）：
   python-docx  读 .docx
   PyMuPDF      读 .pdf
+  openpyxl     导出 Excel 汇总表
 
 不联网也能用吗？不能——但本脚本在**没有**这些包时依然能跑（它只用标准库），
 所以体检本身永远可用。安装走 pip，需要网络。
@@ -20,6 +21,7 @@ from pathlib import Path
 REQUIRED = [
     ("docx", "python-docx", "读 .docx 申报材料"),
     ("fitz", "PyMuPDF", "读 .pdf 申报材料"),
+    ("openpyxl", "openpyxl", "导出 Excel 汇总表"),
 ]
 OPTIONAL = [
     ("yaml", "PyYAML", "仅调试用，非必需"),
