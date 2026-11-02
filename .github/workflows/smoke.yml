@@ -1,0 +1,109 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install python-docx pymupdf
+
+      - name: Byte-compile scripts
+        run: python -m compileall -q scripts
+
+      - name: Validate rubrics (bands must not overlap)
+        run: |
+          python - <<'PY'
+          import json, sys
+          sys.path.insert(0, "scripts")
+          import score
+          for path in ("assets/rubric.example.json",):
+              rub = json.load(open(path, encoding="utf-8"))
+              assert score.validate_rubric_bands(rub) is True
+              for name, spec in rub["awards"].items():
+                  total = sum(d["max"] for d in spec["dimensions"])
+                  assert total > 0, name
+                  print(f"{path}: {name} -> {total}")
+          print("rubric checks passed")
+          PY
+
+      - name: End-to-end smoke on a synthetic document
+        run: |
+          python - <<'PY'
+          # 造一份最小 docx：一段正文 + 一张效益表，跑通 extract -> checks -> score
+          import json, os, subprocess, sys, docx
+          from pathlib import Path
+
+          tmp = Path("smoke"); tmp.mkdir(exist_ok=True)
+          d = docx.Document()
+          d.add_heading("1. 项目背景及必要性", level=1)
+          d.add_paragraph("本项目针对曝气系统能耗偏高的问题开展改造，改造前后的运行数据对比显示电单耗明显下降。" * 90)
+          d.add_heading("2. 效益维度", level=1)
+
+          def table(headers, rows):
+              t = d.add_table(rows=1, cols=len(headers))
+              for i, h in enumerate(headers):
+                  t.rows[0].cells[i].text = h
+              for r in rows:
+                  cells = t.add_row().cells
+                  for i, v in enumerate(r):
+                      cells[i].text = v
+
+          table(["基础字段", "填报内容"], [["技术名称", "曝气系统健康度评价"], ["技术属性", "数字化/信息化"]])
+          table(["序号", "核验项", "填报与佐证"], [["1", "运行/应用记录", "具备全流程记录"], ["2", "数据真实性佐证", "系统截图、运营日志"]])
+          table(["效益维度", "计量口径/单位", "基准值（改造前）", "实际值【已实现】", "佐证材料（附截图）", "远期目标【规划/在研】"], [
+              ["能耗节降", "kWh/吨水", "0.1069", "0.0784（相比改造前下降26.7%）", "运行电耗台账", "持续跟踪"],
+              ["年化经济效益", "万元/年", "0", "54", "成本台账", "120"],
+          ])
+          src = tmp / "sample.docx"; d.save(src)
+
+          def run(*args):
+              r = subprocess.run([sys.executable, *args], capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(r.stdout); print(r.stderr); raise SystemExit(1)
+              return r.stdout
+
+          run("scripts/extract_report.py", str(src), "--out", str(tmp))
+          doc = tmp / "sample.doc.json"
+          docdata = json.load(open(doc, encoding="utf-8"))
+          assert docdata["stats"]["tables"] >= 3, docdata["stats"]
+
+          run("scripts/checks.py", str(doc), "--award", "示例奖A", "--out", str(tmp / "sample.checks.json"))
+          chk = json.load(open(tmp / "sample.checks.json", encoding="utf-8"))
+          assert chk["summary"]["fail"] == 0, chk["summary"]
+
+          plain = docdata["plain"]
+          quote = next(q for q in ["运行电耗台账", "能耗节降"] if q in plain)
+          judg = {
+              "award": "示例奖A",
+              "judgments": {
+                  "value": {"score": 30, "grade": "A", "rationale": "有改造前后电单耗与台账", "quotes": [quote]},
+                  "replication": {"score": 20, "grade": "C", "rationale": "未说明推广范围", "quotes": []},
+                  "novelty": {"score": 15, "grade": "C", "rationale": "未见与原办法的对照", "quotes": []},
+              },
+              "disputes": [],
+          }
+          jp = tmp / "sample.judgments.json"
+          jp.write_text(json.dumps(judg, ensure_ascii=False), encoding="utf-8")
+
+          run("scripts/score.py", str(doc), "--checks", str(tmp / "sample.checks.json"),
+              "--judgments", str(jp), "--award", "示例奖A", "--out", str(tmp))
+
+          res = json.load(open(tmp / "sample.score.json", encoding="utf-8"))
+          assert 0 <= res["ai_score"] <= 100, res
+          # 引文核验必须压等级：0 引文 -> D
+          grades = {x["id"]: x["verified_grade"] for x in res["dimensions"]}
+          assert grades["replication"] == "D", grades
+          assert res["confidence"] in ("高", "中", "低"), res
+          print("e2e smoke passed:", res["ai_score"], res["band"], grades)
+Y

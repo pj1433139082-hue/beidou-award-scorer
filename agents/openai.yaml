@@ -1,0 +1,4 @@
+interface:
+  display_name: "北斗奖申报材料评分"
+  short_description: "按官方评审标准给北斗奖申报材料打分：机检+引文核验+争议点清单"
+  default_prompt: "用北斗奖评分技能给这份申报材料打分，输出 report.md 和争议点清单"

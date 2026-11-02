@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+out/
+*.doc.json
+*.checks.json
+*.score.json
+*.judgments.json
+*.report.md
+.venv/

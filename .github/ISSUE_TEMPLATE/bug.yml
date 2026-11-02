@@ -1,0 +1,46 @@
+name: Bug report
+description: A check mis-fires, extraction mangles a table, or scoring is wrong
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and the output you got.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A synthetic snippet is best. Do NOT paste real submission content - redact names, amounts and company details.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Which layer
+      options:
+        - extract_report.py - text or table came out wrong
+        - checks.py - a check fired when it should not (or missed)
+        - score.py - caps, grading or composition is wrong
+        - batch.py - award detection or output layout
+        - rubric schema / docs
+        - other
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, python-docx / PyMuPDF version
+    validations:
+      required: false
