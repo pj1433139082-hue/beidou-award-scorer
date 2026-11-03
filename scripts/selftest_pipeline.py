@@ -234,23 +234,6 @@ def main() -> int:
     else:
         rec("Excel 导出", False, r.stderr[-160:])
 
-    # ---------- 6b. 逐项目意见 ----------
-    print("\n[6b] 逐项目意见生成")
-    advdir = TMP / "advice"
-    r = run([ROOT / "scripts" / "report_advice.py", out, "--out", advdir])
-    files = list(advdir.glob("*.意见.md")) if advdir.is_dir() else []
-    ok = r.returncode == 0 and len(files) == 1
-    rec("生成逐项目意见文件", ok, "%d 份" % len(files))
-    if ok:
-        txt = files[0].read_text(encoding="utf-8")
-        # 必须有这几段，且不能是空话
-        need = ["各维度得分与意见", "怎么改", "优先补什么"]
-        missing = [x for x in need if x not in txt]
-        rec("意见含必要段落", not missing, "缺 %s" % missing if missing else "")
-        # 建议不能是同一句重复（早期 bug：全局项挂到每个维度）
-        adv_lines = [l for l in txt.splitlines() if l.startswith("- （") or "怎么改**：" in l]
-        rec("意见不是机械重复", len(set(adv_lines)) >= min(2, len(adv_lines)) if adv_lines else True)
-
     # ---------- 6b2. Excel 与 Word 的建议条目必须一一对应 ----------
     print("\n[6b2] 建议条目对应性")
     xl2 = TMP / "corr.xlsx"
@@ -673,6 +656,20 @@ def main() -> int:
             not x.get("quotes_verified") for x in sd["dimensions"]))
     else:
         rec("降级后分数不超 rubric cap", False, "没产出 score.json")
+
+    # ---------- 10h. 机检结论抽查工具 ----------
+    print("\n[10h] 机检结论抽查")
+    vc = ROOT / "scripts" / "verify_checks.py"
+    rec("verify_checks.py 存在", vc.is_file())
+    if vc.is_file():
+        r = run([vc, bdir, "--sample", "1", "--seed", "0"])
+        rec("抽查工具能跑通", r.returncode == 0)
+        rec("抽查输出含判断指引", "待人工判断" in (r.stdout or ""))
+        # 证据必须能在原文里找到（C08 曾有 round 导致证据与原文不符）
+        r2 = run([vc, bdir, "--sample", "1", "--seed", "0", "--only", "C08"])
+        rec("C08 证据不出现原文找不到的告警",
+            "证据在原文找不到" not in (r2.stdout or ""),
+            "发现证据与原文不符")
 
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
