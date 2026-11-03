@@ -411,6 +411,46 @@ def main() -> int:
     rec("judgments 放材料目录也生效", r.returncode == 0 and "1 份有评分" in r.stdout,
         (r.stdout.strip().splitlines() or [""])[-1][:46])
 
+    # ---------- 10d. 参考材料与赛道一致性 ----------
+    print("\n[10d] 参考材料不参与排名 / 赛道不一致要报出")
+    refd = TMP / "refmix"; refd.mkdir(exist_ok=True)
+    import shutil as _sh3
+    _sh3.copy(docx_path, refd / docx_path.name)
+    # 造一份"过往版本"参考材料
+    ref_docx = refd / (AWARD + "-测试材料-过往版本.docx")
+    _sh3.copy(docx_path, ref_docx)
+    _sh3.copy(jp, refd / (AWARD + "-测试材料-过往版本.judgments.json"))
+    _sh3.copy(jp, refd / jp.name)
+    r = run([ROOT / "scripts" / "batch.py", refd, "--out", refd, "--rubric", RUB])
+    lb = refd / "leaderboard.md"
+    ok = r.returncode == 0 and lb.is_file()
+    rec("含参考材料的批次正常完成", ok)
+    if ok:
+        txt = lb.read_text(encoding="utf-8")
+        rec("参考材料单列且注明不计入排名",
+            "参考材料（不计入排名）" in txt and "过往版本" in txt)
+        mf2 = json.loads((refd / "manifest.json").read_text(encoding="utf-8"))
+        rec("manifest 区分参赛与参考",
+            mf2.get("references") == 1 and mf2.get("submissions", 0) == mf2.get("materials", 0),
+            "submissions=%s references=%s materials=%s"
+            % (mf2.get("submissions"), mf2.get("references"), mf2.get("materials")))
+
+    # 赛道不一致：文件名写 A，正文写 B，必须被报出。
+    # 注意：必须用当前评分卡里真实存在的奖项名做文件名前缀，否则 batch 先因
+    # "无法判断奖项"跳过，根本走不到赛道核对那一步。
+    mis = TMP / "mismatch"; mis.mkdir(exist_ok=True)
+    import docx as _docx
+    d = _docx.Document()
+    for line in ["参赛赛道：这是另一个赛道的名称", "改造前电单耗 0.1069 kWh/吨",
+                 "累计已实现节约电费 202.745 万元"]:
+        d.add_paragraph(line)
+    d.save(str(mis / (AWARD + "-赛道不一致材料.docx")))
+    _sh3.copy(jp, mis / (AWARD + "-赛道不一致材料.judgments.json"))
+    r = run([ROOT / "scripts" / "batch.py", mis, "--out", mis, "--rubric", RUB])
+    both = (r.stdout or "") + (r.stderr or "")
+    rec("赛道不一致被报出", "正文声明" in both,
+        [x for x in both.splitlines() if "正文声明" in x][:1])
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
