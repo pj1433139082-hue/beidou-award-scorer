@@ -150,8 +150,12 @@ def c06_promotion_list(doc, award, rub):
         regions = {c for c in flat if re.search(r"大区", c)}
         src = "表%d" % best["index"]
     text = doc["plain"]
-    n_plants_txt = [int(x) for x in re.findall(r"(\d{1,3})\s*(?:家|个)(?:项目|厂站|厂|项目公司)", text)]
-    n_region_txt = [int(x) for x in re.findall(r"(\d{1,2})\s*个大区", text)]
+    # 「13家应用项目」「17个项目推广」都要能识别。
+    # 旧正则要求「家/个」后紧跟「项目/厂站/厂」，中间差一个修饰词就漏——
+    # 实例：水厂设备卫士原文「东部大区13家应用项目」，C06 判 fail 并称"正文也无表述"。
+    n_plants_txt = [int(x) for x in re.findall(
+        r"(\d{1,3})\s*(?:家|个)(?:[\u4e00-\u9fa5]{0,4})?(?:项目|厂站|厂|项目公司|水厂|网点)", text)]
+    n_region_txt = [int(x) for x in re.findall(r"(\d{1,2})\s*个\s*(?:大区|区域)", text)]
     guess = max([len(plants)] + n_plants_txt) if (plants or n_plants_txt) else 0
     n_reg = max([len(regions)] + n_region_txt) if (regions or n_region_txt) else 0
     if guess == 0:
@@ -159,17 +163,29 @@ def c06_promotion_list(doc, award, rub):
     lvl = "深度（10 个以上）" if guess > 10 else ("适度（6-10 个）" if guess >= 6 else "基础（1-5 个）")
     st = "pass" if guess > 10 else ("warn" if guess >= 6 else "fail")
     basis = ("清单" + src) if plants else "正文表述"
-    return R("C06", "推广清单", st, "按%s识别推广规模 %d 个、覆盖大区 %d 个 -> 官方数量档位：%s" % (basis, guess, n_reg, lvl),
+    return R("C06", "推广清单", st, "按%s识别推广项目 %d 个、覆盖大区或区域 %d 个 -> 官方数量档位：%s" % (basis, guess, n_reg, lvl),
              evidence=["正文出现：%s" % snippet(",".join(map(str, sorted(set(n_plants_txt))[:6])) + " 家/个 项目表述", 50)] if n_plants_txt else [],
              dims=["promotion"])
 
 def c07_calc_steps(doc, award, rub):
     if not profile(award, rub).get("promotion"):
         return R("C07", "测算过程", "na", "该奖项未启用测算步骤核查", dims=[])
+    # 表头可能写「公式」「计算步骤」「计算过程」「测算过程」「计算方法」任何一种。
+    # 只认「公式」太窄：实例——水厂设备卫士表头写「计算过程」、公式级披露是全批最完整的之一，
+    # 却被判 fail 并扣分。
+    CALC_WORDS = ("公式", "计算步骤", "计算过程", "测算过程", "测算步骤", "计算方法", "计算口径")
     steps = [b for b in doc["blocks"] if b["type"] == "table"
-             and any(("公式" in h) for h in (b.get("header") or []))]
+             and any(any(w in str(h) for w in CALC_WORDS) for h in (b.get("header") or []))]
     if not steps:
-        return R("C07", "测算过程", "fail", "未找到「计算步骤/公式」测算表，经济效益无法复算", dims=["economics"], rule="金火炬-经济效益")
+        # 兜底：正文里出现「计算过程：」「测算过程：」这类小标题也算有测算
+        body_hit = re.search(r"(计算步骤|计算过程|测算过程|测算步骤|计算方法)[：:]", doc.get("plain", ""))
+        if not body_hit:
+            return R("C07", "测算过程", "fail",
+                     "未找到「计算步骤/公式」测算表，经济效益无法复算",
+                     dims=["economics"], rule="金火炬-经济效益")
+        return R("C07", "测算过程", "warn",
+                 "正文有「%s」小标题，但未见结构化测算表，建议改成表格便于复算" % body_hit.group(1),
+                 dims=["economics"], rule="金火炬-经济效益")
     total = sum(b["n_rows"] for b in steps)
     return R("C07", "测算过程", "pass", "%d 张测算表、共 %d 个计算步骤" % (len(steps), total),
              evidence=["表%d：%s" % (b["index"], snippet(" | ".join(b["header"]), 50)) for b in steps[:3]], dims=["economics"])
@@ -181,10 +197,20 @@ def c08_duplicate_benefit(doc):
         for i, r in enumerate(b["rows"]):
             joined = " ".join(r)
             if not re.search(r"(万元|元/|节约|节降|收益|效益)", joined): continue
-            for m in re.finditer(r"(\d{2,6}(?:\.\d+)?)\s*万元", joined):
+            # 金额必须是完整数字，不能从中间截。
+            # 旧正则 d{2,6} 至少两位，会把 "0.50万元" 从 "50" 开始匹配读成 50.0 万元，
+            # 从而把 0.50 / 4.50 这类小额误判成重复计入（实例：Be-PIPE 被多扣 3 分）。
+            loc = "表%d 行%d" % (b["index"], i + 1)
+            for m in re.finditer(r"(?<![\d.])(\d+(?:\.\d+)?)\s*万元", joined):
                 v = float(m.group(1))
-                if v < 1: continue
-                money.setdefault(round(v, 1), []).append("表%d 行%d" % (b["index"], i + 1))
+                if v < 0.01:
+                    continue
+                # 同一行里同一金额出现多次不算"多处出现"——
+                # 一个单元格写"0.3万元（含税、0.3万元以下）"是正常表述，
+                # 不是重复计入。只有跨行/跨表复现才算。
+                bucket = money.setdefault(round(v, 1), [])
+                if loc not in bucket:
+                    bucket.append(loc)
     dup = {k: v for k, v in money.items() if len(v) > 1}
     if len(dup) >= 3:
         return R("C08", "重复计入检查", "warn", "%d 个金额在多处出现，需确认是否重复计入" % len(dup),
