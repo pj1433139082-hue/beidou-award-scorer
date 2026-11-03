@@ -800,6 +800,20 @@ def main() -> int:
         r = run([cs, out, "--out", str(TMP / "cs2")])
         rec("单轮结果拒绝比对", r.returncode == 2)
 
+    # ---------- 10m. 证据等级必须有可机械核对的清单 ----------
+    print("\n[10m] 证据等级判定清单")
+    rub_d = json.loads(RUB.read_text(encoding="utf-8"))
+    eg = rub_d.get("evidence_grades") or {}
+    rec("四个等级齐全", set(eg) >= {"A", "B", "C", "D"})
+    for g in ("A", "B", "C", "D"):
+        s = eg.get(g) or {}
+        # 光有抽象 desc 不够：一致性检验证明两评审会给出完全不同的等级，
+        # 必须有不依赖理解的具体条目
+        rec("等级 %s 有 all_of 清单" % g, bool(s.get("all_of")),
+            "缺 all_of（只有 desc 时不同评审判定不一致）")
+        rec("等级 %s 有示例" % g, bool(s.get("example")))
+        rec("等级 %s 有判定规则" % g, bool(s.get("judge_rule")))
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
