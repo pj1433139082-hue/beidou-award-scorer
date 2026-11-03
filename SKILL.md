@@ -77,6 +77,34 @@ to use a bundled LibreOffice Kit.
 
 Omit `--all` to get only JSON / Markdown / Excel.
 
+### Verifying the output
+
+Do not trust the log; check the files.
+
+```bash
+python scripts/verify_outputs.py out/ --expect-docx --expect-pdf
+```
+
+It compares what should exist against what does, and exits 1 if anything is missing. `batch.py`
+writes `manifest.json` (every file with its size) and runs this check itself at the end.
+
+For a pipeline where a missing file must stop the run:
+
+```bash
+python scripts/batch.py "<材料目录>" --out out/ --rubric <rubric.json> --all --strict
+```
+
+`--strict` exits 2 when any expected artifact is absent, when PDF was requested but no LibreOffice
+was found, or when a submission has no `judgments.json`. Without it those conditions are reported
+and the run still succeeds.
+
+### What "complete" means per submission
+
+A scored submission must have all of: `doc.json`, `checks.json`, `score.json`, `report.md`,
+`docx`. A submission with no `judgments.json` stops after `checks.json` - that is intended, since a
+score without human judgement would be invented.
+
+
 ## Workflow
 
 ```

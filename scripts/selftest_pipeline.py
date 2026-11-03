@@ -261,6 +261,32 @@ def main() -> int:
     pdf_script = ROOT / "scripts" / "export_pdf.py"
     rec("PDF 导出脚本存在", pdf_script.is_file())
 
+    # ---- 流程硬化：清单 + 独立核验 + 严格模式 ----
+    mf = bdir / "manifest.json"
+    rec("batch 写出 manifest.json", mf.is_file())
+    if mf.is_file():
+        try:
+            m = json.loads(mf.read_text(encoding="utf-8"))
+            rec("manifest 记录了产物", bool(m.get("files")) and bool(m.get("counts")),
+                "%d 个文件" % len(m.get("files", [])))
+        except Exception as e:
+            rec("manifest 记录了产物", False, str(e)[:40])
+
+    ver = ROOT / "scripts" / "verify_outputs.py"
+    r = run([ver, bdir, "--expect-docx"])
+    rec("verify_outputs 通过（产物齐全）", r.returncode == 0)
+    # 删一个文件后必须报错
+    victim = next((p for p in bdir.glob("*.docx") if "汇总" not in p.name), None)
+    if victim:
+        bak = victim.with_suffix(".docx.bak")
+        victim.rename(bak)
+        r = run([ver, bdir, "--expect-docx"])
+        rec("verify_outputs 能抓到缺失", r.returncode != 0, "删掉一个 docx 后退出码 %d" % r.returncode)
+        bak.rename(victim)
+    else:
+        rec("verify_outputs 能抓到缺失", None, "没有可删的 docx")
+        rec("verify_outputs 能抓到缺失", None, "没有可删的 docx")
+
     # ---------- 8. 打包 ----------
     print("\n[8] 打包 + 包内自检")
     dist = TMP / "dist"
@@ -325,6 +351,25 @@ def main() -> int:
     else:
         rec("5 个迭代性用例全判对", None, "该评分卡无 iteration 闸门，跳过")
 
+    # ---------- 10b. 单份坏数据不能拖垮整批 ----------
+    print("\n[10b] 单份坏 judgments 不拖垮整批")
+    bj = TMP / "badj"; bj.mkdir()
+    import shutil as _sh
+    _sh.copy(docx_path, bj / docx_path.name)
+    # 再复制一份，判断它的 judgments 是坏 JSON
+    bad_docx = bj / (AWARD + "-坏材料.docx")
+    _sh.copy(docx_path, bad_docx)
+    good_j = json.loads(jp.read_text(encoding="utf-8"))
+    (bj / jp.name).write_text(json.dumps(good_j, ensure_ascii=False), encoding="utf-8")
+    (bj / (AWARD + "-坏材料.judgments.json")).write_text("{ 这不是合法 JSON", encoding="utf-8")
+    r = run([ROOT / "scripts" / "batch.py", bj, "--out", bj, "--rubric", RUB])
+    lb = (bj / "leaderboard.md")
+    rec("坏 judgments 不中断整批", r.returncode == 0 and lb.is_file(),
+        "退出码 %d" % r.returncode)
+    if lb.is_file():
+        txt = lb.read_text(encoding="utf-8")
+        rec("排行榜标出未评分的原因", "未评分" in txt and "不是合法 JSON" in txt)
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
@@ -353,6 +398,11 @@ def main() -> int:
     # 空目录 batch
     r = run([ROOT / "scripts" / "batch.py", edge, "--out", edge])
     rec("空目录 batch 报错可读", r.returncode == 2 and "没有匹配到材料文件" in r.stderr)
+    # batch 指定的 rubric 不存在，必须是可读错误而不是 traceback
+    r = run([ROOT / "scripts" / "batch.py", bdir, "--out", bdir,
+             "--rubric", edge / "norubric.json"])
+    rec("batch 缺评分卡报错可读", r.returncode == 2 and "找不到评分卡" in r.stderr
+        and "Traceback" not in r.stderr)
     # 空目录 export
     r = run([ROOT / "scripts" / "export_xlsx.py", edge, "--out", edge / "x.xlsx"])
     rec("无评分数据时 Excel 导出报错可读", r.returncode == 1 and "没找到 score.json" in r.stderr)
