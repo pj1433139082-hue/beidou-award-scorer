@@ -187,9 +187,15 @@ def main() -> int:
         ws = wb["汇总"]
         # 关键列必须存在
         hdr = {str(ws.cell(4, c).value).strip() for c in range(1, ws.max_column + 1)}
-        need = {"申报材料", "总分", "奖项区间", "需关注", "修改建议"}
+        need = {"申报材料", "总分", "奖项区间", "修改建议"}
+        # 「置信度」「需关注」已按要求去掉，不该再出现
+        banned = {"置信度", "需关注"}
         rec("Excel 三个工作表齐全", sheets == ["汇总", "维度明细", "争议点"], str(sheets))
         rec("汇总表关键列存在", need <= hdr, "缺 %s" % (need - hdr) if not need <= hdr else "")
+        rec("已去掉置信度/需关注列", not (banned & hdr), "仍有 %s" % (banned & hdr) if banned & hdr else "")
+        # 总计行必须在汇总表里
+        all_txt = " ".join(str(c.value) for row in ws.iter_rows() for c in row if c.value)
+        rec("汇总表含总计行", "总计" in all_txt and "平均" in all_txt)
         # 建议列必须有内容（不能是空列）
         adv_col = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(4, c).value).strip() == "修改建议")
         filled = sum(1 for rw in range(5, ws.max_row + 1)
