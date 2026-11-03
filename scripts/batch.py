@@ -13,9 +13,24 @@ from __future__ import annotations
 import argparse, json, subprocess, sys
 from pathlib import Path
 
+class RubricError(Exception):
+    """评分卡不可用。"""
+
+
 def load_awards(rubric_path):
     """奖项名与文件名别名都从 rubric 读，不在脚本里硬编码。"""
-    data = json.loads(Path(rubric_path).read_text(encoding="utf-8"))
+    rp = Path(rubric_path)
+    if not rp.is_file():
+        raise RubricError(
+            "找不到评分卡：%s\n"
+            "  公开副本用 assets/rubric.example.json；"
+            "你自己的赛事用 assets/rubric.json 或 --rubric 指定。" % rp)
+    try:
+        data = json.loads(rp.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise RubricError("评分卡不是合法 JSON（%s）：\n  %s" % (e.msg, rp))
+    if not (data.get("awards") or {}):
+        raise RubricError("评分卡里没有 awards：%s" % rp)
     names = list((data.get("awards") or {}).keys())
     aliases = []
     for name, spec in (data.get("awards") or {}).items():
@@ -60,6 +75,8 @@ def main():
                     help="同时导出 Word（每份一个 + 一本汇总）")
     ap.add_argument("--with-pdf", action="store_true",
                     help="再把 Word 转成 PDF（需要 LibreOffice，找不到则跳过）")
+    ap.add_argument("--strict", action="store_true",
+                    help="严格模式：任何预期产物缺失、或有材料缺 judgments，都以退出码 2 结束")
     ap.add_argument("--all", action="store_true",
                     help="等同 --with-docx --with-pdf，一条命令出全套交付物")
     ap.add_argument("--from-scores", action="store_true",
@@ -71,7 +88,11 @@ def main():
         a.with_docx = True
         a.with_pdf = True
     src, out = Path(a.src), Path(a.out)
-    awards, aliases = load_awards(a.rubric)
+    try:
+        awards, aliases = load_awards(a.rubric)
+    except RubricError as e:
+        print("错误：" + str(e), file=sys.stderr)
+        return 2
     out.mkdir(parents=True, exist_ok=True)
     if a.from_scores:
         # 只重出排行榜与 Excel
@@ -138,10 +159,17 @@ def main():
         # judgments 可能就在源目录（from-json 场景），也可能在输出目录
         jp = (f.parent / (stem + ".judgments.json")) if a.from_json else (out / (stem + ".judgments.json"))
         if jp.exists() and not a.machine_only:
-            subprocess.run([sys.executable, str(HERE / "score.py"), str(doc), "--checks", str(chk),
-                            "--judgments", str(jp), "--award", award, "--rubric", a.rubric,
-                            "--out", str(out)], check=True,
-                           stdout=subprocess.DEVNULL)
+            # 单份 judgments 坏了不能拖垮整批：报出来、继续下一份
+            r = subprocess.run([sys.executable, str(HERE / "score.py"), str(doc), "--checks", str(chk),
+                                "--judgments", str(jp), "--award", award, "--rubric", a.rubric,
+                                "--out", str(out)],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                err = (r.stderr or "").strip().splitlines()
+                row["score_error"] = err[0][:120] if err else "打分失败"
+                print("[skip] %s：%s" % (stem[:32], row["score_error"]), file=sys.stderr)
+                rows.append(row)
+                continue
             s = json.loads((out / (stem + ".score.json")).read_text(encoding="utf-8"))
             row.update({"ai_score": s["ai_score"], "band": s["band"], "confidence": s["confidence"],
                         "veto": s["veto"]})
@@ -161,11 +189,10 @@ def main():
             s["pass"], s["warn"], s["fail"]))
     others = [r for r in rows if "ai_score" not in r]
     if others:
-        lines += ["", "## 仅机检（缺 judgments）", "",
-                  "| 材料 | 奖项 | pass/warn/fail |", "|---|---|---|"]
+        lines += ["", "## 未评分", "", "| 材料 | 奖项 | 原因 |", "|---|---|---|"]
         for r in others:
-            s = r["checks"]
-            lines.append("| %s | %s | %d/%d/%d |" % (r["name"][:40], r["award"], s["pass"], s["warn"], s["fail"]))
+            why = r.get("score_error") or r.get("note") or "未提供 judgments"
+            lines.append("| %s | %s | %s |" % (r["name"][:40], r["award"], why))
     (out / "leaderboard.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("写出 %s（%d 份材料，%d 份有评分）" % (out / "leaderboard.md", len(rows), len(scored)))
 
@@ -203,6 +230,67 @@ def main():
                     print("写出 %d 个 PDF" % len(list(out.glob("*.pdf"))))
             else:
                 print("PDF 转换未全部完成：" + r.stdout.strip()[-160:], file=sys.stderr)
+        elif getattr(a, "strict", False):
+            # 严格模式下，要求 PDF 却没转出来，就是失败
+            print("严格模式：要求 PDF 但未执行转换（缺 LibreOffice）", file=sys.stderr)
+            return 2
+
+    # ---- 后置核验：不看日志，只看文件在不在 ----
+    manifest = out / "manifest.json"
+    files = []
+    for p in sorted(out.iterdir()):
+        if p.is_file() and p.name != "manifest.json":
+            files.append({"name": p.name, "size": p.stat().st_size})
+    counts = {}
+    for it in files:
+        suf = Path(it["name"]).suffix
+        counts[suf] = counts.get(suf, 0) + 1
+    manifest.write_text(json.dumps({
+        "materials": len(scored), "rows": len(rows),
+        "counts": counts, "files": files,
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    # 缺 judgments 的材料：严格模式下算失败
+    scored_fail = [r for r in rows if r.get("score_error")]
+    if scored_fail and getattr(a, "strict", False):
+        print("严格模式失败：%d 份材料打分失败" % len(scored_fail), file=sys.stderr)
+        return 2
+    no_judg = [r["name"] for r in rows if "ai_score" not in r and not r.get("score_error")]
+    if no_judg:
+        msg = "有 %d 份材料缺 judgments，只出了机检：%s" % (
+            len(no_judg), "、".join(n[:20] for n in no_judg[:3]))
+        if getattr(a, "strict", False):
+            print("严格模式失败：" + msg, file=sys.stderr)
+            return 2
+        print("提示：" + msg)
+
+    # 调独立核验脚本，逐项确认产物齐全
+    vargs = [sys.executable, str(HERE / "verify_outputs.py"), str(out)]
+    if getattr(a, "with_docx", False):
+        vargs.append("--expect-docx")
+    if getattr(a, "with_pdf", False):
+        vargs.append("--expect-pdf")
+    if getattr(a, "strict", False):
+        vargs.append("--strict")
+    v = subprocess.run(vargs, capture_output=True, text=True)
+    try:
+        vs = json.loads(v.stdout)
+    except Exception:
+        vs = {"ok": False, "missing": ["核验脚本输出无法解析"], "missing_total": 1}
+    if vs.get("ok"):
+        print("核验通过：%d 份材料，产物齐全" % vs.get("materials", 0))
+    else:
+        strict = getattr(a, "strict", False)
+        head = "严格模式失败：缺 %d 项" if strict else "提示：非严格模式，有 %d 项未生成"
+        print((head % vs.get("missing_total", 0)) + "（多为未装 LibreOffice 导致的 PDF）",
+              file=sys.stderr)
+        for m in vs.get("missing", [])[:5]:
+            print("  - " + m, file=sys.stderr)
+        if vs.get("missing_total", 0) > 5:
+            print("  …共 %d 项" % vs["missing_total"], file=sys.stderr)
+        if strict:
+            return 2
+    print("清单：%s" % manifest)
     return 0
 
 if __name__ == "__main__":
