@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把评分结果导成 Excel（给领导看的精简版）。
+"""评分结果 → Excel。
 
-输入：score.json（一或多份）+ leaderboard
-输出：.xlsx，三个工作表
-  Sheet1 汇总      —— 一行一份材料：分数 / 区间 / 置信度 / 各维度分 / 风险标记
-  Sheet2 维度明细  —— 一行一个维度：得分、失分原因、封顶、引文
-  Sheet3 争议点    —— 一行一个争议点：来源、问题、答辩要追问什么
+只有两张表：
+  汇总       一行一份材料：总分、区间、各维度得分、首要修改建议；含小计与总计
+  修改建议   维度明细 + 争议点 + 逐条改法合并成这一张：每条含
+             编号 / 材料 / 维度 / 问题 / 原文是什么 / 怎么改 / 修改之后的句子
 
-用法：
-  python scripts/export_xlsx.py out/ --out 排行榜.xlsx
-  python scripts/export_xlsx.py out/材料.score.json --out 单份.xlsx
-  python scripts/export_xlsx.py out/ --out 榜.xlsx --award 金火炬   # 只看某奖项
+建议条目来自 advice_engine.build_items()，与 Word 意见书同一来源，
+因此两边编号、顺序、条数完全一致。
 """
 from __future__ import annotations
 import argparse, json, re, sys
@@ -25,259 +22,145 @@ except ImportError:
     print("缺少 openpyxl。先运行：python scripts/setup.py --install", file=sys.stderr)
     raise SystemExit(2)
 
-# ---- 视觉规范（克制：只有表头有底色，数字列居中，长文本自动换行）----
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from advice_engine import build_items, total_gain  # noqa: E402
+
 INK = "1A1A1A"
 MUTED = "5A6472"
-HEAD_BG = "0B6B57"      # 深绿：表头
-HEAD_FG = "FFFFFF"
-BAND_BG = "F5F7F9"     # 斑马纹
-WARN_BG = "FEF3C7"     # 需注意
-BAD_BG = "FEE2E2"      # 否决/风险
-GOOD_BG = "DCFCE7"     # 良好
+HEAD_BG = "0B6B57"
+BAND_BG = "F5F7F9"
+WARN_BG = "FEF3C7"
 LINE = "D9DEE5"
+ACCENT = "0B6B57"
 
 thin = Side(style="thin", color=LINE)
 BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
 
 F_TITLE = Font(name="Microsoft YaHei", size=14, bold=True, color=INK)
-F_HEAD = Font(name="Microsoft YaHei", size=10.5, bold=True, color=HEAD_FG)
+F_HEAD = Font(name="Microsoft YaHei", size=10.5, bold=True, color="FFFFFF")
 F_CELL = Font(name="Microsoft YaHei", size=10, color=INK)
 F_SMALL = Font(name="Microsoft YaHei", size=9, color=MUTED)
-F_BOLD = Font(name="Microsoft YaHei", size=10, bold=True, color=INK)
+F_MONO = Font(name="Consolas", size=9, color=INK)
 
-A_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+A_LEFT = Alignment(horizontal="left", vertical="top", wrap_text=True)
 A_MID = Alignment(horizontal="center", vertical="center", wrap_text=True)
-A_TOP = Alignment(horizontal="left", vertical="top", wrap_text=True)
-
-BAND_ORDER = ["一等奖候选", "二等奖候选", "三等奖候选", "入围候选", "待提升"]
-
-# ---------- 修改建议生成规则 ----------
-# 键：维度 id + 失分原因关键词 -> 建议文案
-# 面向申报人：说清"补什么"和"补了能加多少分"
-ADVICE = {
-    "value": [
-        ("C02", "把效益表里的「实际值【已实现】」和「远期目标【规划/在研】」分开填：已兑现的填实际值并附台账截图，没兑现的只填远期目标。现在两者混填，价值性封顶 40%。"),
-        ("C04", "每个已实现效益都要有佐证材料：台账截图、运行日志或核算表，填进「佐证材料（附截图）」列。覆盖率低于 80% 价值性封顶 70%。"),
-        ("C03", "每项效益补上改造前的基准值和对比周期，否则变化率算不出来，别人无法复算。"),
-        ("C05", "正文里的百分比要和表格里的数字对得上（偏差不超过 5 个百分点），否则会被判为数字不自洽。"),
-        ("C16", "把「预计/有望」的表述换成实际发生的量，量化成效描述要能落到具体金额或比例。"),
-    ],
-    "replication": [
-        ("C14", "补一段与原办法的量化对照：改造前后/两种方案的同一指标对比，给出百分比或倍数。"),
-        ("C02", "补充可推广范围的实际数据：已应用厂站数、覆盖区域数，而不是只写定性描述。"),
-    ],
-    "novelty": [
-        ("C14", "补与原有做法的量化对照：同一场景下新旧方案的效果差值（成本、精度、时效），并说明差异来自哪个创新点。"),
-    ],
-    "intelligence": [
-        ("C11", "补模型实验室的线上部署记录、试点厂的生产调用记录，以及不少于 90 天的运行验证数据；三者齐备才能拿满智能化水平分。"),
-    ],
-    "promotion": [
-        ("C06", "补一份推广清单：大区 / 区域 / 水厂逐个列出（要能数出个数），正文写清覆盖了几个大区、几个区域、几个项目。"),
-    ],
-    "economics": [
-        ("C07", "补「计算步骤」表：每一步写清 Excel 公式、计算结果、单位和含义。只给一个总金额无法复算，经济效益封顶。"),
-        ("C08", "同一个金额若在多处出现，确认不是重复计入（如吨水单耗和总费用各算一次）。"),
-    ],
-    "readiness": [
-        ("C12", "写清成果从方案到产品的转化程度：已产品化（有合同/订单/收入）→ 非常符合；只有原型 → 符合；仍在方案 → 一般。补交付形态说明。"),
-    ],
-    "usability": [
-        ("C15", "补集团战略对齐说明（对应十五五/集团战略方向）和当前卡点的具体描述，说明方案如何直接解决该卡点。"),
-    ],
-}
-
-GLOBAL_ADVICE = [
-    ("C09", "把没填的占位符（下划线、XXXX、（文本））全部补实，未填项会被判为材料未完成。"),
-    ("C17", "插入关键运行界面、台账、报告的截图并加说明，只放图不放说明不构成证据。"),
-]
-
-
-# 按机检编号 → 建议文案。键是 checks.json 里的 Cxx 编号。
-ADVICE_BY_CHECK = {
-    "C02": "把效益表的「实际值【已实现】」与「远期目标【规划/在研】」分开填：已兑现的填实际值并附台账截图，未兑现的只填远期目标。两者混填，价值性最高只能拿 40%。",
-    "C03": "每项效益补上改造前的基准值和对比周期。没有基线，变化率无法复算，等于没有说服力。",
-    "C04": "每个已实现效益都要配佐证材料（台账截图 / 运行日志 / 核算表），填进「佐证材料（附截图）」列。覆盖率低于 80% 价值性封顶 70%。",
-    "C05": "正文里的百分比要与表格数字一致（偏差不超过 5 个百分点），否则会被判为数字不自洽。",
-    "C08": "同一金额若在多处出现，确认没有重复计入（如吨水单耗与总费用各算一次）。",
-    "C09": "把没填的占位符（下划线、XXXX、（文本））全部补实，未填项会被判为材料未完成。",
-    "C11": "补模型实验室线上部署记录、试点厂生产调用记录，以及不少于 90 天的运行验证；三者齐备才能拿满智能化水平分。",
-    "C12": "写清从方案到产品的转化程度：已产品化（有合同/订单/收入）→非常符合；仅原型→符合；仍在方案→一般。",
-    "C13": "补一段「相较上次参赛版本」的迭代说明：改了什么、指标提升多少。没有这段，成果迭代性这项会被判为否决项待裁定。",
-    "C14": "补与原办法的量化对照：同一场景下新旧方案的效果差值（成本、精度、时效），并说明差异来自哪个创新点。",
-    "C15": "补集团战略对齐说明（对应十五五 / 集团战略方向）与当前卡点的具体描述，说明方案如何直接解决该卡点。",
-    "C16": "把「预计 / 有望」换成实际发生的量：量化成效要能落到具体金额或比例。",
-    "C17": "插入关键运行界面、台账、报告截图并加说明；只放图不说明不构成证据。",
-    "C06": "补一份推广清单：大区 / 区域 / 水厂逐个列出（要能数出个数），正文写清覆盖几个大区、几个区域、几个项目。",
-    "C07": "补「计算步骤」表：每步写清公式、结果、单位、含义。只给总金额无法复算，经济效益拿不到高分。",
-    "C18": "确认三个子项的证据齐全：推广案例佐证、经济测算过程、产品形态说明。",
-    "C19": "补齐专属模板的六段：实施背景、模型应用、业务价值、ROI 核算、下一步计划、量化数据。",
-    "C20": "ROI 要有可复算的投入与收益两段，并配足量化数字。",
-}
-
-# 维度 → 相关的机检编号（用于把检查结果映射到维度）
-DIM_CHECKS = {
-    "value": ["C02", "C03", "C04", "C05", "C08", "C16"],
-    "replication": ["C06", "C14", "C09"],
-    "novelty": ["C14", "C09"],
-    "intelligence": ["C11", "C17"],
-    "promotion": ["C06", "C18", "C07"],
-    "economics": ["C07", "C08", "C05"],
-    "readiness": ["C12"],
-    "usability": ["C15"],
-}
-
-
-def build_advice(dim: dict, checks: list, gates: list, deductions: list) -> str:
-    """按该维度命中的机检编号，给出可执行的修改建议（最多 3 条，按优先级）。
-
-    编号来源（按可靠性排序）：
-      1. caps_and_gates[].check —— 该维度的封顶由哪条机检造成（最准）
-      2. deductions[].check     —— 固定扣分来自哪条机检
-      3. checks.json 里 status 为 warn/fail 且 dims 含本维度的检查
-    """
-    dim_id = dim.get("id")
-    hit = []
-    for g in gates or []:
-        if g.get("dim") == dim_id and g.get("check"):
-            hit.append(g["check"])
-    for d in deductions or []:
-        if d.get("check"):
-            hit.append(d["check"])
-    for c in checks or []:
-        if c.get("status") in ("warn", "fail"):
-            cdims = c.get("dims") or []
-            if dim_id in cdims:
-                hit.append(c.get("id"))
-            elif not cdims and c.get("id") in ("C09", "C17"):
-                hit.append(c.get("id"))   # 全局项（占位符/截图）作为兜底提醒
-    out = []
-    for cid in hit:
-        txt = ADVICE_BY_CHECK.get(cid)
-        if txt and txt not in out:
-            out.append(txt)
-    # 证据等级被下调也算失分，给一条针对性建议
-    if not out and dim.get("claimed_grade") != dim.get("verified_grade"):
-        out.append("该维度引文没全部通过核验：把引文换成材料里的原句（逐字、不改写），"
-                   "并补到 2 句以上，否则证据等级会被压到 C 及以下。")
-    if not out:
-        if dim.get("score", 0) < dim.get("max", 0) * 0.8:
-            out.append("该维度论证偏弱：补具体数据与佐证，讲清「做了什么—产生了什么—怎么验证的」，"
-                       "并给出一组可复算的数字。")
-        else:
-            out.append("该维度已基本达标，若要更稳，建议再补一条与原办法的量化对照。")
-    return " ".join(out[:3])
-
-
-
-def band_fill(band: str) -> str | None:
-    """区间列不再大面积上色——只留很淡的提示色，避免整张表花掉。"""
-    if band.startswith("否决"):
-        return BAD_BG
-    if "待提升" in band:
-        return "FFF7ED"
-    return None
 
 
 def band_font(band: str):
-    """区间用字体色区分，视觉更轻。"""
     if band.startswith("否决"):
         return Font(name="Microsoft YaHei", size=10, bold=True, color="B91C1C")
-    if "一等奖" in band:
-        return Font(name="Microsoft YaHei", size=10, bold=True, color="15803D")
-    if "二等奖" in band:
-        return Font(name="Microsoft YaHei", size=10, bold=True, color="1D4ED8")
-    if "三等奖" in band:
-        return Font(name="Microsoft YaHei", size=10, bold=True, color="A16207")
+    for k, color in {"一等奖": "15803D", "二等奖": "1D4ED8", "三等奖": "A16207"}.items():
+        if k in band:
+            return Font(name="Microsoft YaHei", size=10, bold=True, color=color)
     if "待提升" in band:
         return Font(name="Microsoft YaHei", size=10, color="9A3412")
     return Font(name="Microsoft YaHei", size=10, color=INK)
 
 
-def short(text: str, n: int = 60) -> str:
-    t = re.sub(r"\s+", " ", str(text or "")).strip()
+def short(t, n=60):
+    t = re.sub(r"\s+", " ", str(t or "")).strip()
     return t if len(t) <= n else t[: n - 1] + "…"
 
 
+def strip_award(name: str) -> str:
+    s = re.sub(r"^(金点子|金刚钻|金引擎|金智囊|金火炬|特别奖-[^\s\-－—]*)[-－—\s]*", "",
+               str(name or "").strip())
+    return re.sub(r"^[-－—\s]+", "", s).strip() or str(name or "")
+
+
 def collect(src: Path) -> list[dict]:
-    """收集 score.json。支持目录或单文件。"""
-    files = sorted(src.glob("*.score.json")) if src.is_dir() else ([src] if src.is_file() else [])
     out = []
-    for f in files:
+    for sf in sorted(src.glob("*.score.json")):
         try:
-            d = json.loads(f.read_text(encoding="utf-8"))
+            d = json.loads(sf.read_text(encoding="utf-8"))
         except Exception:
             continue
         if "dimensions" not in d:
             continue
-        d["_file"] = f
-        cf = f.with_name(f.name.replace(".score.json", ".checks.json"))
-        if cf.is_file():
-            try:
-                d["_checks"] = json.loads(cf.read_text(encoding="utf-8")).get("checks", [])
-            except Exception:
-                d["_checks"] = []
-        else:
-            d["_checks"] = []
+        stem = sf.name.replace(".score.json", "")
+        cf = src / (stem + ".checks.json")
+        d["_checks"] = {c["id"]: c for c in
+                        (json.loads(cf.read_text(encoding="utf-8")).get("checks", [])
+                         if cf.is_file() else [])}
+        df = src / (stem + ".doc.json")
+        d["_plain"] = (json.loads(df.read_text(encoding="utf-8")).get("plain", "")
+                       if df.is_file() else "")
+        d["_stem"] = stem
+        try:
+            d["_items"] = build_items(d)
+        except Exception:
+            d["_items"] = []
         out.append(d)
     return out
 
 
-def build_summary(wb, rows):
-    """汇总表：材料 / 总分 / 区间 / 维度…… / 修改建议。
+def build_sheet(wb, rows):
+    """唯一的一张表：每份材料一行主行，其下跟着该材料的建议子行。
 
-    列结构固定为 5 个维度槽位，所有奖项共用，列宽恒定。
-    不做按奖项"动态伸缩列数"的处理——那会让不同奖项的建议列落在不同列上，看起来就是错位。
-
-    两个关键约束：
-      · 维度槽位后**不留空列**，直接接「修改建议」。早期版本维度槽位固定 5 个，
-        3 维的奖项会空出 2 列，肉眼看着就是断开一截。
-      · 每个奖项分组末尾给一行小计（该组总分与均分），批次最后给一行总计。
+    版式（同一张表，不另开 sheet）：
+        主行   申报材料 | 总分 | 区间 | 维度得分×N | 预计改完提升 | 改完后总分 | 修改建议
+        子行   （合并前 3 列，写编号+维度+问题）… 原文是什么 / 怎么改 / 改后句子
+        分隔行 合并整行写"答辩可能被追问"块
+        小计行 各奖项组末
+        总计行 全表末
     """
-    ws = wb.create_sheet("汇总")
+    ws = wb.create_sheet("评分汇总")
     ws.sheet_view.showGridLines = False
     ws["A1"] = "北斗奖申报材料评分汇总"
     ws["A1"].font = F_TITLE
-    ws["A2"] = "分数区间为相对刻度（85/75/65/55），非官方切线；机检结论需回原文确认"
+    ws["A2"] = ("分数区间为相对刻度（85/75/65/55），非官方切线；机检结论需回原文确认。"
+                "「改完提升」= 各维度失分 × 证据等级回收集（A 90% / B 60% / C 50% / D 30%），"
+                "同一维度只计一次，补齐材料不代表满分。")
     ws["A2"].font = F_SMALL
 
     COL_NAME, COL_SCORE, COL_BAND = 1, 2, 3
-    COL_DIM0 = 4                       # 维度从第 4 列开始（去掉置信度后前移一位）
-    # 修改建议列固定在「最多维度数」之后，保证所有奖项的建议列都在同一列；
-    # 维度不足的奖项，多出来的维度格留空但**不额外加列**——列数恒定，不会错位。
+    COL_DIM0 = 4
     MAXDIM = max((len(d["dimensions"]) for d in rows), default=3)
-    COL_ADV = COL_DIM0 + MAXDIM
-    LAST = COL_ADV
+    COL_GAIN = COL_DIM0 + MAXDIM
+    COL_AFTER = COL_GAIN + 1
+    # 建议区 3 列：原文 / 怎么改 / 改后句子
+    COL_ORIG = COL_AFTER + 1
+    COL_HOW = COL_ORIG + 1
+    COL_FIX = COL_HOW + 1
+    LAST = COL_FIX
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=LAST)
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=LAST)
 
-    widths = {COL_NAME: 46, COL_SCORE: 8, COL_BAND: 12}
+    widths = {COL_NAME: 38, COL_SCORE: 7, COL_BAND: 10}
     for i in range(MAXDIM):
-        widths[COL_DIM0 + i] = 11
-    widths[COL_ADV] = 62
-    # 隐藏用不到的维度槽位列，避免视觉上出现空档
-    used = {COL_NAME, COL_SCORE, COL_BAND, COL_ADV} | {COL_DIM0 + i for i in range(MAXDIM)}
+        widths[COL_DIM0 + i] = 9.5
+    widths[COL_GAIN] = 13
+    widths[COL_AFTER] = 11
+    widths[COL_ORIG] = 38
+    widths[COL_HOW] = 40
+    widths[COL_FIX] = 42
     for c, w in widths.items():
         ws.column_dimensions[get_column_letter(c)].width = w
 
-    # 全局表头：维度区域合成一格「维度得分」，下方分组行再写具体维度名
     hr = 4
-    for c, h in ((COL_NAME, "申报材料"), (COL_SCORE, "总分"), (COL_BAND, "奖项区间"),
-                 (COL_ADV, "修改建议")):
+    for c, h in ((COL_NAME, "申报材料 / 修改建议"), (COL_SCORE, "总分"),
+                 (COL_BAND, "奖项区间"), (COL_GAIN, "改完提升"),
+                 (COL_AFTER, "改完总分"),
+                 (COL_ORIG, "原文是什么"), (COL_HOW, "怎么改"),
+                 (COL_FIX, "修改之后的句子")):
         cell = ws.cell(hr, c, h)
         cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
         cell.alignment = A_MID; cell.border = BORDER
     if MAXDIM >= 1:
-        ws.merge_cells(start_row=hr, start_column=COL_DIM0, end_row=hr, end_column=COL_DIM0 + MAXDIM - 1)
-        dc = ws.cell(hr, COL_DIM0, "维度得分（满分）" if MAXDIM > 1 else "维度得分")
+        ws.merge_cells(start_row=hr, start_column=COL_DIM0, end_row=hr,
+                       end_column=COL_DIM0 + MAXDIM - 1)
+        dc = ws.cell(hr, COL_DIM0, "维度得分（满分）")
         dc.font = F_HEAD; dc.alignment = A_MID
     for c in range(COL_DIM0, COL_DIM0 + MAXDIM):
         ws.cell(hr, c).fill = PatternFill("solid", fgColor=HEAD_BG)
         ws.cell(hr, c).border = BORDER
-    ws.row_dimensions[hr].height = 26
+    ws.row_dimensions[hr].height = 34
+    # 表头统一垂直居中、允许换行，避免长表头被压成三行
+    for c in range(1, LAST + 1):
+        cell = ws.cell(hr, c)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # 按奖项分组
     groups = []
     for r in rows:
         a = r["award"]
@@ -288,39 +171,35 @@ def build_summary(wb, rows):
         g["rows"].append(r)
 
     rw = hr + 1
-    all_scores = []
+    all_scores, all_gains = [], []
     for g in groups:
-        # 分组标题行：奖项名占前 3 列，维度名从第 4 列起
-        ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw, end_column=COL_BAND)
+        ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw, end_column=LAST)
         gc = ws.cell(rw, COL_NAME, "%s　·　%d 份" % (g["award"], len(g["rows"])))
         gc.font = Font(name="Microsoft YaHei", size=10.5, bold=True, color="FFFFFF")
         gc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
         for c in range(COL_NAME, LAST + 1):
             ws.cell(rw, c).fill = PatternFill("solid", fgColor=HEAD_BG)
             ws.cell(rw, c).border = BORDER
-        for i, dname in enumerate(g["dims"][:MAXDIM]):
-            cell = ws.cell(rw, COL_DIM0 + i, dname)
-            cell.font = Font(name="Microsoft YaHei", size=9.5, bold=True, color="FFFFFF")
-            cell.alignment = A_MID
-        for i in range(len(g["dims"]), MAXDIM):
-            ws.cell(rw, COL_DIM0 + i, "")
-        ws.row_dimensions[rw].height = 22
+        ws.row_dimensions[rw].height = 20
         rw += 1
 
         for r in g["rows"]:
-            disp = re.sub(r"^(特别奖-AI融创[^-]*|金点子|金刚钻|金引擎|金智囊|金火炬)[-－—]?", "", r["name"])
-            c1 = ws.cell(rw, COL_NAME, short(disp, 52))
-            c1.font = F_CELL
-            c1.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True, indent=1)
+            mi = rows.index(r) + 1
+            items = r.get("_items") or []
+            gain = total_gain(items, r["ai_score"]) if items else 0.0
+            after = round(min(100.0, r["ai_score"] + gain), 1)
+
+            # ---- 主行 ----
+            disp = strip_award(r["name"])
+            c1 = ws.cell(rw, COL_NAME, short(disp, 46))
+            c1.font = Font(name="Microsoft YaHei", size=10, bold=True, color=INK)
+            c1.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True,
+                                     indent=1)
             c2 = ws.cell(rw, COL_SCORE, r["ai_score"])
             c2.font = Font(name="Microsoft YaHei", size=11, bold=True, color=INK)
             c2.alignment = A_MID
-            band_txt = r["band"]
-            if "暂列" in band_txt:
-                band_txt = "待裁定"
-            elif len(band_txt) > 8:
-                band_txt = band_txt[:7] + "…"
-            c3 = ws.cell(rw, COL_BAND, band_txt)
+            band_txt = "待裁定" if "暂列" in r["band"] else r["band"]
+            c3 = ws.cell(rw, COL_BAND, band_txt if len(band_txt) <= 8 else band_txt[:7] + "…")
             c3.font = band_font(r["band"]); c3.alignment = A_MID
 
             for i, d in enumerate(r["dimensions"][:MAXDIM]):
@@ -331,192 +210,149 @@ def build_summary(wb, rows):
                     cell.fill = PatternFill("solid", fgColor=WARN_BG)
                 elif ratio >= 0.85:
                     cell.fill = PatternFill("solid", fgColor="E8F5E9")
-            # 维度槽位不足时填 "—"：该奖项没有这个维度，留空会看着像断了一截
             for i in range(len(r["dimensions"]), MAXDIM):
                 blank = ws.cell(rw, COL_DIM0 + i, "—")
                 blank.font = Font(name="Microsoft YaHei", size=9, color=MUTED)
                 blank.alignment = A_MID
 
-            # 修改建议：失分最多的维度
-            items = []
-            for d in sorted(r["dimensions"], key=lambda x: (x["max"] - x["score"]), reverse=True):
-                if d["max"] - d["score"] <= 0.01:
-                    continue
-                a_txt = build_advice(d, r.get("_checks") or [], r.get("caps_and_gates") or [],
-                                     r.get("deductions") or [])
-                if not a_txt:
-                    continue
-                parts = re.split(r"(?<=。)", a_txt)
-                first = next((p.strip() for p in parts if p.strip()), "")
-                if len(first) > 40:
-                    first = first[:39] + "…"
-                items.append("[%s] %s" % (d["name"], first))
-                if len(items) >= 1:
-                    break
-            ac = ws.cell(rw, COL_ADV, chr(10).join(items) or "—")
-            ac.font = Font(name="Microsoft YaHei", size=9, color=MUTED)
-            ac.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True, indent=1)
-
+            cg = ws.cell(rw, COL_GAIN, ("+%.1f" % gain) if gain else "—")
+            cg.font = Font(name="Microsoft YaHei", size=10, bold=bool(gain),
+                           color="15803D" if gain >= 10 else (INK if gain else MUTED))
+            cg.alignment = A_MID
+            ca = ws.cell(rw, COL_AFTER, after if gain else "—")
+            ca.font = Font(name="Microsoft YaHei", size=10, color=INK if gain else MUTED)
+            ca.alignment = A_MID
+            # 主行右侧写一句总览
+            note = ("建议 %d 条，见下方" % len(items)) if items else "各维度达标"
+            nc = ws.cell(rw, COL_ORIG, note)
+            nc.font = Font(name="Microsoft YaHei", size=9, color=MUTED, italic=True)
+            nc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            for c in range(COL_HOW, LAST + 1):
+                ws.cell(rw, c, "")
+            # 主行：浅底 + 加粗下边框，与下方的建议子行明确分开
+            med = Side(style="medium", color="9CC5B8")
             for c in range(COL_NAME, LAST + 1):
-                ws.cell(rw, c).border = BORDER
-            est = len(disp)
-            ws.row_dimensions[rw].height = 24 if est <= 26 else (34 if est <= 44 else 44)
+                cell = ws.cell(rw, c)
+                cell.border = Border(left=thin, right=thin, top=med, bottom=med)
+                cell.fill = PatternFill("solid", fgColor="F0FDF4")
+            # A 列宽 38（约 19 个中文字/行），材料名要按实际换行数给高度，
+            # 否则名字被裁掉、上面的字看不见。
+            name_lines = max(1, -(-len(disp) // 18))
+            ws.row_dimensions[rw].height = max(26, name_lines * 15 + 10)
+            rw += 1
+
+            # ---- 建议子行：原文 / 怎么改 / 改后 ----
+            for it in items:
+                no_cell = ws.cell(rw, COL_NAME, "　%s　%s　%s" % (
+                    "%d-%s" % (mi, it["no"]), it["dim"], it["title"]))
+                no_cell.font = Font(name="Microsoft YaHei", size=9.5, bold=True, color=ACCENT)
+                no_cell.alignment = Alignment(horizontal="left", vertical="top",
+                                              wrap_text=True, indent=1)
+                ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw,
+                               end_column=COL_BAND)
+                ws.merge_cells(start_row=rw, start_column=COL_DIM0, end_row=rw,
+                               end_column=COL_AFTER)
+                gain_txt = (("＋%.1f" % it["gain"]) if it["gain"]
+                            else ("合并计入" if "合并" in (it.get("gain_note") or "") else "—"))
+                gl = ws.cell(rw, COL_DIM0, gain_txt)
+                gl.font = Font(name="Microsoft YaHei", size=8.5, bold=bool(it["gain"]),
+                               color="15803D" if it["gain"] else MUTED)
+                gl.alignment = Alignment(horizontal="center", vertical="top")
+
+                for c, key in ((COL_ORIG, "original"), (COL_HOW, "how"), (COL_FIX, "revised")):
+                    cell = ws.cell(rw, c, it.get(key, ""))
+                    cell.font = (Font(name="Microsoft YaHei", size=9,
+                                      color="0B4F3F" if c == COL_FIX else INK))
+                    cell.alignment = A_LEFT
+                    cell.border = BORDER
+
+                for c in range(COL_NAME, LAST + 1):
+                    ws.cell(rw, c).border = BORDER
+                # 按 9pt 字号估算：列宽 38/40/42 ≈ 每行 30/32/34 个中文，
+                # 每行 12.5pt 足够（12.5 × 1.15 ≈ 14pt 实际行距）。
+                lbl = "　%d-%s　%s　%s" % (mi, it["no"], it["dim"], it["title"])
+                lines = max(
+                    max(1, -(-len(lbl) // 30)),                          # A:C 合并
+                    max(1, -(-len(str(it.get("original", ""))) // 30)),
+                    max(1, -(-len(str(it.get("how", ""))) // 32)),
+                    max(1, -(-len(str(it.get("revised", ""))) // 34)),
+                )
+                ws.row_dimensions[rw].height = min(120, max(24, lines * 12.5 + 6))
+                rw += 1
+
+            # ---- 争议点 ----
+            ds = r.get("disputes") or []
+            if ds:
+                ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw,
+                               end_column=LAST)
+                bc = ws.cell(rw, COL_NAME, "　　答辩可能被追问（%d 条）" % len(ds))
+                bc.font = Font(name="Microsoft YaHei", size=9, bold=True, color=MUTED)
+                bc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+                for c in range(COL_NAME, LAST + 1):
+                    ws.cell(rw, c).fill = PatternFill("solid", fgColor=BAND_BG)
+                    ws.cell(rw, c).border = BORDER
+                ws.row_dimensions[rw].height = 16
+                rw += 1
+                for i, x in enumerate(ds, 1):
+                    pt = (x.get("point") or "").strip()
+                    src_ = (x.get("source") or "").strip()
+                    ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw,
+                                   end_column=COL_DIM0 - 1)
+                    qc = ws.cell(rw, COL_NAME, "　　Q%02d" % i)
+                    qc.font = Font(name="Microsoft YaHei", size=9, bold=True, color=MUTED)
+                    qc.alignment = Alignment(horizontal="left", vertical="top", indent=1)
+                    ws.merge_cells(start_row=rw, start_column=COL_DIM0, end_row=rw,
+                                   end_column=COL_FIX)
+                    qc2 = ws.cell(rw, COL_DIM0, pt + ("　（来源：%s）" % src_ if src_ else ""))
+                    qc2.font = Font(name="Microsoft YaHei", size=9, color=INK)
+                    qc2.alignment = A_LEFT
+                    for c in range(COL_NAME, LAST + 1):
+                        ws.cell(rw, c).border = BORDER
+                    ws.row_dimensions[rw].height = min(60, max(20, int(len(str(x.get("point") or "")) / 40) * 14 + 16))
+                    rw += 1
+
             all_scores.append(r["ai_score"])
-            rw += 1
+            all_gains.append(gain)
+            # 不留空行：靠主行浅绿底色分隔，空行只会让表格显得断裂
 
-        # 该奖项小计
         sc = [x["ai_score"] for x in g["rows"]]
-        if sc:
-            ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw,
-                           end_column=COL_BAND)
-            label = ws.cell(rw, COL_NAME, "%s　小计：%d 份，均分 %.1f" % (
-                g["award"], len(sc), sum(sc) / len(sc)))
-            label.font = Font(name="Microsoft YaHei", size=9.5, bold=True, color=INK)
-            label.alignment = Alignment(horizontal="right", vertical="center", indent=1)
-            for c in range(COL_NAME, LAST + 1):
-                ws.cell(rw, c).fill = PatternFill("solid", fgColor=BAND_BG)
-                ws.cell(rw, c).border = BORDER
-            ws.row_dimensions[rw].height = 20
-            rw += 1
+        gg = [total_gain(x.get("_items") or [], x["ai_score"]) for x in g["rows"]]
+        ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw, end_column=LAST)
+        label = ws.cell(rw, COL_NAME,
+                        "%s　小计：%d 份　均分 %.1f　平均可提升 %.1f　改完均分 %.1f　" % (
+                            g["award"], len(sc), sum(sc) / len(sc),
+                            sum(gg) / len(gg) if gg else 0,
+                            sum(min(100.0, x["ai_score"] + total_gain(x.get("_items") or [],
+                                                                       x["ai_score"]))
+                                for x in g["rows"]) / len(sc)))
+        label.font = Font(name="Microsoft YaHei", size=9.5, bold=True, color=INK)
+        label.alignment = Alignment(horizontal="right", vertical="center", indent=1)
+        for c in range(COL_NAME, LAST + 1):
+            ws.cell(rw, c).fill = PatternFill("solid", fgColor=BAND_BG)
+            ws.cell(rw, c).border = BORDER
+        ws.row_dimensions[rw].height = 20
+        rw += 1   # 不额外留空行：分组靠深绿标题行 + 小计灰底分隔，空行会让表格显得断裂
 
-        rw += 1   # 组间留空
-
-    # 总计行
     if all_scores:
-        ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw, end_column=COL_BAND)
-        tc = ws.cell(rw, COL_NAME, "总计　%d 份材料　平均 %.1f 分　最高 %.1f　最低 %.1f" % (
-            len(all_scores), sum(all_scores) / len(all_scores),
-            max(all_scores), min(all_scores)))
+        ws.merge_cells(start_row=rw, start_column=COL_NAME, end_row=rw, end_column=LAST)
+        tc = ws.cell(rw, COL_NAME,
+                     "总计　%d 份材料　平均 %.1f 分　最高 %.1f　最低 %.1f　"
+                     "平均可提升 %.1f　改完平均 %.1f" % (
+                         len(all_scores), sum(all_scores) / len(all_scores),
+                         max(all_scores), min(all_scores),
+                         sum(all_gains) / len(all_gains),
+                         sum(min(100.0, x["ai_score"] + total_gain(x.get("_items") or [],
+                                                                   x["ai_score"]))
+                             for x in rows) / len(rows)))
         tc.font = Font(name="Microsoft YaHei", size=10, bold=True, color="FFFFFF")
         tc.alignment = Alignment(horizontal="right", vertical="center", indent=1)
         for c in range(COL_NAME, LAST + 1):
             ws.cell(rw, c).fill = PatternFill("solid", fgColor=HEAD_BG)
             ws.cell(rw, c).border = BORDER
-        ws.row_dimensions[rw].height = 22
+        ws.row_dimensions[rw].height = 24
 
     ws.freeze_panes = ws.cell(hr + 1, COL_NAME)
     return ws
-
-
-
-def build_detail(wb, rows):
-    ws = wb.create_sheet("维度明细")
-    ws.sheet_view.showGridLines = False
-    ws["A1"] = "维度得分明细"
-    ws["A1"].font = F_TITLE
-    ws["A2"] = "「失分原因」= 封顶（材料证据不足）或等级下调；引文为原文逐字片段，未通过核验的会标出"
-    ws["A2"].font = F_SMALL
-    ws.merge_cells("A1:H1"); ws.merge_cells("A2:H2")
-
-    head = ["申报材料", "维度", "满分", "得分", "得分率", "证据等级", "失分原因", "原文引文", "修改建议"]
-    hr = 4
-    for c, h in enumerate(head, 1):
-        cell = ws.cell(hr, c, h)
-        cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
-        cell.alignment = A_MID; cell.border = BORDER
-
-    rw = hr + 1
-    for r in rows:
-        for d in r["dimensions"]:
-            reasons = []
-            if d.get("cap_reason"):
-                reasons.append(d["cap_reason"])
-            # 该维度命中的机检（即使没造成封顶，也要显示）
-            for c in r.get("_checks") or []:
-                if c.get("status") in ("warn", "fail") and d["id"] in (c.get("dims") or []):
-                    reasons.append("%s %s" % (c.get("id"), c.get("name")))
-            if d.get("claimed_grade") != d.get("verified_grade"):
-                reasons.append("证据等级 %s→%s（引文未全部核验）" % (d.get("claimed_grade"), d.get("verified_grade")))
-            quotes = "；".join(d.get("quotes_verified") or [])
-            rejected = d.get("quotes_rejected") or []
-            if rejected:
-                # quotes_rejected 是 [{quote, why}] 结构，不是字符串列表
-                rej_txt = "；".join(
-                    ("%s（%s）" % (x.get("quote", ""), x.get("why", ""))) if isinstance(x, dict) else str(x)
-                    for x in rejected)
-                quotes = (quotes + "；" if quotes else "") + "【未通过核验】" + rej_txt
-            advice_txt = build_advice(d, r.get("_checks") or [], r.get("caps_and_gates") or [], r.get("deductions") or [])
-            disp_name = re.sub(r"^(特别奖-AI融创[^-]*|金点子|金刚钻|金引擎|金智囊|金火炬)[-－—]?", "", r["name"])
-            vals = [
-                short(disp_name, 26), d["name"], d["max"], d["score"],
-                ("%.0f%%" % (d["score"] / d["max"] * 100)) if d["max"] else "—",
-                d.get("verified_grade", "—"),
-                short("；".join(reasons), 46) or "—",
-                short(quotes, 55) if quotes else "—",
-                short(advice_txt, 150) or "—",
-            ]
-            for c, v in enumerate(vals, 1):
-                cell = ws.cell(rw, c, v)
-                cell.font = F_CELL; cell.border = BORDER
-                cell.alignment = A_MID if c in (3, 4, 5, 6) else A_LEFT
-            rate = d["score"] / d["max"] if d["max"] else 1
-            if rate < 0.6:
-                ws.cell(rw, 4).fill = PatternFill("solid", fgColor=WARN_BG)
-            if d.get("quotes_rejected"):
-                ws.cell(rw, 8).fill = PatternFill("solid", fgColor=BAD_BG)
-            # 行高：按每列"字数 ÷ 列宽"估换行数，取最大值（中文按 1 字≈1 单位宽）
-            col_w = [30, 10, 6, 6, 7, 8, 32, 40, 62]
-            max_lines = 1
-            for vi, v in enumerate(vals):
-                w = col_w[vi] if vi < len(col_w) else 20
-                lines_needed = max(1, int(len(str(v)) / max(w - 1, 4)) + 1)
-                max_lines = max(max_lines, lines_needed)
-            ws.row_dimensions[rw].height = min(96, max(20, max_lines * 13))
-            rw += 1
-
-    for c, w in enumerate([30, 10, 6, 6, 7, 8, 32, 40, 62], 1):
-        ws.column_dimensions[get_column_letter(c)].width = w
-    ws.row_dimensions[hr].height = 26
-    ws.freeze_panes = ws.cell(hr + 1, 1)
-    return ws
-
-
-def build_disputes(wb, rows):
-    ws = wb.create_sheet("争议点")
-    ws.sheet_view.showGridLines = False
-    ws["A1"] = "争议点清单（答辩追问用）"
-    ws["A1"].font = F_TITLE
-    ws["A2"] = "这些是材料里含糊、缺证据或前后不一致的地方，答辩时按此逐条追问"
-    ws["A2"].font = F_SMALL
-    ws.merge_cells("A1:D1"); ws.merge_cells("A2:D2")
-
-    head = ["申报材料", "来源", "争议内容", "佐证 / 定位"]
-    hr = 4
-    for c, h in enumerate(head, 1):
-        cell = ws.cell(hr, c, h)
-        cell.font = F_HEAD; cell.fill = PatternFill("solid", fgColor=HEAD_BG)
-        cell.alignment = A_MID; cell.border = BORDER
-
-    rw = hr + 1
-    n = 0
-    for r in rows:
-        for dsp in r.get("disputes") or []:
-            ev = "；".join(str(x) for x in (dsp.get("evidence") or []))
-            disp_name = re.sub(r"^(特别奖-AI融创[^-]*|金点子|金刚钻|金引擎|金智囊|金火炬)[-－—]?", "", r["name"])
-            vals = [short(disp_name, 26), dsp.get("source", "—"), short(dsp.get("point", ""), 90), short(ev, 60) or "—"]
-            for c, v in enumerate(vals, 1):
-                cell = ws.cell(rw, c, v)
-                cell.font = F_CELL; cell.border = BORDER
-                cell.alignment = A_MID if c == 2 else A_LEFT
-            if "否决" in str(dsp.get("source", "")):
-                for c in range(1, 5):
-                    ws.cell(rw, c).fill = PatternFill("solid", fgColor=BAD_BG)
-            elif n % 2 == 1:
-                for c in range(1, 5):
-                    ws.cell(rw, c).fill = PatternFill("solid", fgColor=BAND_BG)
-            rw += 1; n += 1
-
-    if not n:
-        ws.cell(hr + 1, 1, "无争议点。").font = F_CELL
-        ws.merge_cells(start_row=hr + 1, start_column=1, end_row=hr + 1, end_column=4)
-
-    for c, w in enumerate([30, 14, 62, 40], 1):
-        ws.column_dimensions[get_column_letter(c)].width = w
-    ws.row_dimensions[hr].height = 26
-    ws.freeze_panes = ws.cell(hr + 1, 1)
-    return ws
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description="评分结果 → Excel")
     ap.add_argument("src", help="score.json 文件或含多个 score.json 的目录")
@@ -534,12 +370,12 @@ def main() -> int:
 
     wb = Workbook()
     wb.remove(wb.active)
-    build_summary(wb, rows)
-    build_detail(wb, rows)
-    build_disputes(wb, rows)
+    build_sheet(wb, rows)
     wb.save(a.out)
-    print(json.dumps({"out": a.out, "sheets": ["汇总", "维度明细", "争议点"],
-                      "materials": len(rows)}, ensure_ascii=False))
+    total_items = sum(len(r.get("_items") or []) for r in rows)
+    print(json.dumps({"out": a.out, "sheets": wb.sheetnames,
+                      "materials": len(rows), "advice_items": total_items},
+                     ensure_ascii=False))
     return 0
 
 

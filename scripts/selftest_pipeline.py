@@ -184,23 +184,53 @@ def main() -> int:
         from openpyxl import load_workbook
         wb = load_workbook(xl)
         sheets = wb.sheetnames
-        ws = wb["汇总"]
+        ws = wb[wb.sheetnames[0]]
         # 关键列必须存在
         hdr = {str(ws.cell(4, c).value).strip() for c in range(1, ws.max_column + 1)}
-        need = {"申报材料", "总分", "奖项区间", "修改建议"}
+        need = {"申报材料 / 修改建议", "总分", "奖项区间", "改完提升", "改完总分",
+                "原文是什么", "怎么改", "修改之后的句子"}
         # 「置信度」「需关注」已按要求去掉，不该再出现
         banned = {"置信度", "需关注"}
-        rec("Excel 三个工作表齐全", sheets == ["汇总", "维度明细", "争议点"], str(sheets))
+        rec("Excel 只有一张表", len(sheets) == 1, str(sheets))
         rec("汇总表关键列存在", need <= hdr, "缺 %s" % (need - hdr) if not need <= hdr else "")
         rec("已去掉置信度/需关注列", not (banned & hdr), "仍有 %s" % (banned & hdr) if banned & hdr else "")
         # 总计行必须在汇总表里
         all_txt = " ".join(str(c.value) for row in ws.iter_rows() for c in row if c.value)
         rec("汇总表含总计行", "总计" in all_txt and "平均" in all_txt)
         # 建议列必须有内容（不能是空列）
-        adv_col = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(4, c).value).strip() == "修改建议")
-        filled = sum(1 for rw in range(5, ws.max_row + 1)
-                     if ws.cell(rw, adv_col).value and str(ws.cell(rw, adv_col).value).strip() not in ("", "—"))
-        rec("修改建议列有实际内容", filled >= 1, "%d 行有建议" % filled)
+        # 首要修改建议列的列名含"首要修改建议"，用包含匹配
+        adv_col = next((c for c in range(1, ws.max_column + 1)
+                        if "修改建议" in str(ws.cell(4, c).value or "")), None)
+        filled = 0
+        if adv_col:
+            filled = sum(1 for rw in range(5, ws.max_row + 1)
+                         if ws.cell(rw, adv_col).value
+                         and str(ws.cell(rw, adv_col).value).strip() not in ("", "—"))
+        # 「预计改完提升」与「改完后总分」两列
+        gain_col = next((c for c in range(1, ws.max_column + 1)
+                         if "改完提升" in str(ws.cell(4, c).value or "")), None)
+        after_col = next((c for c in range(1, ws.max_column + 1)
+                          if "改完总分" in str(ws.cell(4, c).value or "")), None)
+        rec("有「预计改完提升」列", gain_col is not None)
+        rec("有「改完后总分」列", after_col is not None)
+        if gain_col and after_col:
+            pairs = []
+            for rw in range(5, ws.max_row + 1):
+                g = ws.cell(rw, gain_col).value
+                a = ws.cell(rw, after_col).value
+                sc = ws.cell(rw, 2).value
+                if isinstance(g, str) and g.startswith("+") and isinstance(a, (int, float)) \
+                        and isinstance(sc, (int, float)):
+                    pairs.append((sc, float(g[1:]), float(a)))
+            rec("提升值为正且改完分不超过100",
+                bool(pairs) and all(a <= 100 and g > 0 for s, g, a in pairs),
+                "%d 行有提升值" % len(pairs))
+            # 改完分 ≈ 当前分 + 提升（允许合计封顶）
+            ok_math = all(abs(min(100.0, s + g) - a) < 0.15 for s, g, a in pairs)
+            rec("改完分 = 当前分 + 提升", ok_math)
+
+        rec("首要修改建议列有内容", bool(adv_col) and filled >= 1,
+            "%s 行有建议" % filled if adv_col else "未找到该列")
     else:
         rec("Excel 导出", False, r.stderr[-160:])
 
@@ -220,6 +250,92 @@ def main() -> int:
         # 建议不能是同一句重复（早期 bug：全局项挂到每个维度）
         adv_lines = [l for l in txt.splitlines() if l.startswith("- （") or "怎么改**：" in l]
         rec("意见不是机械重复", len(set(adv_lines)) >= min(2, len(adv_lines)) if adv_lines else True)
+
+    # ---------- 6b2. Excel 与 Word 的建议条目必须一一对应 ----------
+    print("\n[6b2] 建议条目对应性")
+    xl2 = TMP / "corr.xlsx"
+    r = run([ROOT / "scripts" / "export_xlsx.py", out, "--out", xl2])
+    wdir2 = TMP / "corrwd"
+    r2 = run([ROOT / "scripts" / "export_docx.py", out, "--out", wdir2])
+    ok = r.returncode == 0 and r2.returncode == 0 and xl2.is_file()
+    rec("两份导出都成功", ok)
+    if ok:
+        from openpyxl import load_workbook as _lw
+        from docx import Document as _Doc
+        import re as _re
+        wb2 = _lw(xl2)
+        rec("Excel 只有一张表", len(wb2.sheetnames) == 1, str(wb2.sheetnames))
+        ws2 = wb2[wb2.sheetnames[0]]
+        # 单表里建议编号出现在第一列（可能带前导全角空格），扫全表提取
+        xl_nos = []
+        for row in ws2.iter_rows(min_row=5, values_only=True):
+            for v in row:
+                if v is None:
+                    continue
+                m2 = _re.search(r"([0-9]+-M[0-9][0-9])\u3000", str(v))
+                if m2:
+                    xl_nos.append(m2.group(1))
+                    break
+        wd_nos, lack = [], 0
+        for f2 in wdir2.glob("*.docx"):
+            if "汇总" in f2.name:
+                continue
+            txt = "\n".join(p.text for p in _Doc(str(f2)).paragraphs)
+            for seg in ("原文是什么", "怎么改", "修改之后的句子"):
+                if seg not in txt:
+                    lack += 1
+            for p in _Doc(str(f2)).paragraphs:
+                m = _re.match(r"^([0-9]+-M[0-9][0-9])\u3000", p.text.strip())
+                if m:
+                    wd_nos.append(m.group(1))
+        rec("Word 与 Excel 条目数一致", len(wd_nos) == len(xl_nos) and len(xl_nos) > 0,
+            "Word %d / Excel %d" % (len(wd_nos), len(xl_nos)))
+        rec("Word 与 Excel 编号集合相同", sorted(wd_nos) == sorted(xl_nos))
+        rec("每条建议都是三段式", lack == 0, "缺 %d 处" % lack if lack else "")
+        # Word 必须是白底黑字：不允许出现彩色文字
+        colored = 0
+        for f2 in wdir2.glob("*.docx"):
+            for p in _Doc(str(f2)).paragraphs:
+                for rr_ in p.runs:
+                    c = rr_.font.color
+                    if c is not None and c.rgb is not None and str(c.rgb) not in ("000000", "555555"):
+                        colored += 1
+        rec("Word 无彩色文字", colored == 0, "彩色 run %d 处" % colored if colored else "")
+        # 四节结构齐全（含免责说明）
+        first_txt = "\n".join(p.text for p in _Doc(str(next(wdir2.glob("*.docx")))).paragraphs)
+        has4 = all(sec in first_txt for sec in ("一、", "二、", "三、", "四、免责说明"))
+        rec("Word 有四节（含免责说明）", has4)
+
+        # 内容质量：结构齐全不等于内容可用。逐条检查三段都不是空话。
+        short_o, fb_no_need, x_tpl, checked_items = 0, 0, 0, 0
+        for f2 in wdir2.glob("*.docx"):
+            if "汇总" in f2.name:
+                continue
+            paras2 = [p.text.strip() for p in _Doc(str(f2)).paragraphs]
+            idx2 = [i for i, x in enumerate(paras2)
+                    if _re.match(r"^[0-9]+-M[0-9][0-9]\u3000", x)]
+            segs2 = ["原文是什么", "怎么改", "修改之后的句子（可直接复制）"]
+            for j2, st2 in enumerate(idx2):
+                en2 = idx2[j2 + 1] if j2 + 1 < len(idx2) else len(paras2)
+                blk = paras2[st2:en2]
+                vel = {}
+                for s2 in segs2:
+                    if s2 in blk:
+                        i2 = blk.index(s2)
+                        vel[s2] = blk[i2 + 1] if i2 + 1 < len(blk) and blk[i2 + 1] not in segs2 else ""
+                checked_items += 1
+                if len(vel.get(segs2[0], "")) < 12:
+                    short_o += 1
+                if "证据等级" in vel.get(segs2[0], "")[:6] and "需补充" not in vel.get(segs2[0], ""):
+                    fb_no_need += 1
+                if "X 方案" in vel.get(segs2[2], "") and "填：" not in vel.get(segs2[2], ""):
+                    x_tpl += 1
+        rec("原文段不空泛（>=12 字）", short_o == 0,
+            "过短 %d/%d" % (short_o, checked_items) if short_o else "%d 条均合格" % checked_items)
+        rec("证据不足时写明需补什么", fb_no_need == 0,
+            "未说明 %d 条" % fb_no_need if fb_no_need else "")
+        rec("可抄句式不含裸 X 占位", x_tpl == 0,
+            "裸占位 %d 条" % x_tpl if x_tpl else "")
 
     # ---------- 6c. Word 导出 ----------
     print("\n[6c] 逐项目意见导出 Word")
@@ -456,6 +572,107 @@ def main() -> int:
     both = (r.stdout or "") + (r.stderr or "")
     rec("赛道不一致被报出", "正文声明" in both,
         [x for x in both.splitlines() if "正文声明" in x][:1])
+
+    # ---------- 10e. 格式问题只提醒不扣分 ----------
+    print("\n[10e] 格式问题只提醒、不扣分")
+    fmt_dir = TMP / "fmtonly"; fmt_dir.mkdir(exist_ok=True)
+    import docx as _dx
+    d0 = _dx.Document()
+    for line in ["改造前电单耗 0.1069 kWh/吨，改造后 0.0784 kWh/吨",
+                 "累计已实现节约电费 202.745 万元",
+                 "已在东部大区 3 个区域 13 家水厂推广应用",
+                 "填报单位：____    填报日期：XX年XX月XX日"]:
+        d0.add_paragraph(line)
+    d0.save(str(fmt_dir / (AWARD + "-含占位符材料.docx")))
+    jf2 = json.loads(jp.read_text(encoding="utf-8"))
+    (fmt_dir / (AWARD + "-含占位符材料.judgments.json")).write_text(
+        json.dumps(jf2, ensure_ascii=False), encoding="utf-8")
+    r = run([ROOT / "scripts" / "batch.py", fmt_dir, "--out", fmt_dir, "--rubric", RUB])
+    sj = fmt_dir / (AWARD + "-含占位符材料.score.json")
+    ok = r.returncode == 0 and sj.is_file()
+    rec("含占位符材料能正常评分", ok)
+    if ok:
+        sd = json.loads(sj.read_text(encoding="utf-8"))
+        cids = {x.get("check") for x in (sd.get("deductions") or [])}
+        rec("占位符 C09 不产生扣分", "C09" not in cids, "扣分项: %s" % sorted(c for c in cids if c))
+        cids17 = {x.get("check") for x in (sd.get("deductions") or [])}
+        rec("截图 C17 不产生扣分", "C17" not in cids17)
+        # 但必须出现在争议点里提醒
+        pts = " ".join(str(x.get("point")) for x in (sd.get("disputes") or []))
+        has_c09_notice = ("占位" in pts) and ("不扣分" in pts)
+        rec("占位符问题仍作为提醒出现", has_c09_notice)
+        # 规则本身也要守住：score.py 里 C09/C17 不许再出现 deduct(
+        src_sc = (ROOT / "scripts" / "score.py").read_text(encoding="utf-8")
+        bad_lines = [ln.strip() for ln in src_sc.splitlines()
+                     if ("C09" in ln or "C17" in ln)
+                     and "deduct(" in ln and not ln.strip().startswith("#")]
+        rec("score.py 里 C09/C17 不得 deduct", not bad_lines,
+            bad_lines[0][:60] if bad_lines else "")
+        # 文档必须写明这条规则
+        sk = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        rec("SKILL.md 写明格式问题不扣分",
+            ("C09" in sk and "C17" in sk)
+            and ("不扣分" in sk or "not deducted" in sk or "no deduction" in sk))
+
+    # ---------- 10f. 格式检查器本身必须能抓问题 ----------
+    print("\n[10f] 格式检查器")
+    vf = ROOT / "scripts" / "verify_format.py"
+    rec("verify_format.py 存在", vf.is_file())
+    if vf.is_file():
+        # 正常产物应全过（自测批次不出 PDF，故跳过 PDF 检查）
+        r = run([vf, bdir, "--no-pdf"])
+        rec("正常产物格式验收通过", r.returncode == 0,
+            (r.stdout.strip().splitlines() or [""])[-1][:50])
+        # 删掉一个 pdf 必须报错（若有 pdf）
+        pdfs = list(bdir.glob("*.pdf"))
+        if pdfs:
+            bak = pdfs[0].with_suffix(".pdf.bak")
+            pdfs[0].rename(bak)
+            r = run([vf, bdir])
+            rec("verify_format 能按预期判断 PDF", r.returncode != 0)
+            bak.rename(pdfs[0])
+        else:
+            # 本批没产出 PDF（未装转换器或未要 --with-pdf），这条无从验证，跳过不计失败
+            print("        [SKIP] verify_format 能抓到缺 PDF（本批无 PDF）")
+
+    # ---------- 10g. 证据等级封顶必须严格按 rubric ----------
+    print("\n[10g] 证据等级封顶只认 rubric")
+    src_sc2 = (ROOT / "scripts" / "score.py").read_text(encoding="utf-8")
+    # 只看代码行，不看注释（注释里会提到历史常量名）
+    code_lines = [ln for ln in src_sc2.splitlines()
+                  if ln.strip() and not ln.strip().startswith("#")]
+    rec("score.py 不再有 GRADE_FACTOR 常量",
+        not any("GRADE_FACTOR = {" in ln for ln in code_lines),
+        "发现第二套系数表")
+    rec("score.py 有 grade_cap_value()", "def grade_cap_value(" in src_sc2)
+
+    # 造全假引文，逼出降级，验证分数不超 rubric cap
+    dg = TMP / "downgrade"; dg.mkdir(exist_ok=True)
+    jd = json.loads(jp.read_text(encoding="utf-8"))
+    for k in (jd.get("judgments") or {}):
+        jd["judgments"][k]["grade"] = "A"                 # 自报最高级
+        jd["judgments"][k]["quotes"] = ["这句话原文里绝对不存在假引文测试"]  # 全部编造
+    (dg / (AWARD + "-降级测试.judgments.json")).write_text(
+        json.dumps(jd, ensure_ascii=False), encoding="utf-8")
+    import shutil as _sh4
+    _sh4.copy(docx_path, dg / (AWARD + "-降级测试.docx"))
+    r = run([ROOT / "scripts" / "batch.py", dg, "--out", dg, "--rubric", RUB])
+    sfile = dg / (AWARD + "-降级测试.score.json")
+    if sfile.is_file():
+        sd = json.loads(sfile.read_text(encoding="utf-8"))
+        rub_d = json.loads(RUB.read_text(encoding="utf-8"))
+        caps = {k: v["cap"] for k, v in (rub_d.get("evidence_grades") or {}).items()}
+        bad = []
+        for x in sd["dimensions"]:
+            g = x.get("verified_grade")
+            if g in caps and x["score"] > x["max"] * caps[g] + 0.05:
+                bad.append("%s %s级 %.1f>%.1f" % (x["name"], g, x["score"],
+                                                  x["max"] * caps[g]))
+        rec("降级后分数不超 rubric cap", not bad, "; ".join(bad[:2]))
+        rec("编造引文确实被拒", all(
+            not x.get("quotes_verified") for x in sd["dimensions"]))
+    else:
+        rec("降级后分数不超 rubric cap", False, "没产出 score.json")
 
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")

@@ -24,8 +24,16 @@ def main() -> int:
     # 真实评分卡：优先私有副本，其次环境变量
     rub_path = Path(os.environ.get("BD_RUBRIC", "")) if os.environ.get("BD_RUBRIC") else None
     if not rub_path or not rub_path.is_file():
-        cand = Path(r"D:\obsidian_work\cangku\paper_work\工作台\项目\北控水务集团\北斗奖评分技能\assets\rubric.json")
-        rub_path = cand if cand.is_file() else None
+        # 只在本机约定位置找，找不到就跳过——不要写死绝对路径，
+        # 换机器会指向不存在的目录。
+        for rel in (Path(__file__).resolve().parents[1] / "assets" / "rubric.json",
+                    Path.home() / ".agents" / "skills" / "beidou-award-scorer"
+                    / "assets" / "rubric.json"):
+            if rel.is_file():
+                rub_path = rel
+                break
+        else:
+            rub_path = None
     if not rub_path:
         print("找不到真实评分卡，跳过本组测试。")
         return 0
