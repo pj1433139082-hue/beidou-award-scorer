@@ -753,6 +753,33 @@ def main() -> int:
         cmp = TMP / "m2" / "版本对比.md"
         rec("compare 产出对比表", cmp.is_file())
 
+    # ---------- 10k. 建议落实核对 ----------
+    print("\n[10k] 建议落实核对")
+    cc = ROOT / "scripts" / "check_compliance.py"
+    rec("check_compliance.py 存在", cc.is_file())
+    if cc.is_file():
+        # 自测目录没有 xlsx（建议清单在那里），先在旁边放一份
+        import shutil as _sh7, subprocess as _sp7
+        xsrc = TMP / "cc-src"
+        xsrc.mkdir(exist_ok=True)
+        _sp7.run([sys.executable, str(ROOT / "scripts" / "export_xlsx.py"), str(out),
+                  "--out", str(xsrc / "北斗奖评分汇总.xlsx")],
+                 capture_output=True, text=True)
+        for f2 in out.glob("*.doc.json"):
+            _sh7.copy2(f2, xsrc / f2.name)
+        r = run([cc, out, "--baseline", xsrc, "--out", str(TMP / "cc")])
+        rec("核对工具能跑通", r.returncode == 0, (r.stderr or "")[-100:])
+        rep = TMP / "cc" / "建议落实核对.md"
+        rec("产出核对报告", rep.is_file())
+        if rep.is_file():
+            txt = rep.read_text(encoding="utf-8")
+            rec("报告含四类状态", all(k in txt for k in
+                ("已落实", "部分落实", "未改动", "无法判断")))
+            # 同一份材料跟自己比，不该出现"已落实"
+            rec("同版对比不误报已落实", '"已落实": 0' in (r.stdout or "") or
+                '"已落实": 0' in (r.stdout or ""),
+                (r.stdout or "")[:80])
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
