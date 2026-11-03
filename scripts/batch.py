@@ -86,6 +86,12 @@ def main():
     ap.add_argument("--from-scores", action="store_true",
                     help="src 里已有 *.score.json，只重出排行榜与 Excel（不再机检打分）")
     ap.add_argument("--machine-only", action="store_true", help="只出机检，不打分")
+    ap.add_argument("--require-bound", action="store_true",
+                    help="要求 judgments 已绑定 material_sha256（防跨机器/跨材料复用）")
+    ap.add_argument("--bind", action="store_true",
+                    help="打分前自动给 judgments 写入 material_sha256")
+    ap.add_argument("--no-keep-judgments", action="store_true",
+                    help="跑完删除输出目录里的 *.judgments.json（避免答案留在原地）")
     ap.add_argument("--rubric", default=str(DEFAULT_RUBRIC), help="评分卡路径，奖品名与别名从这里读")
     a = ap.parse_args()
     if getattr(a, "all", False):
@@ -184,11 +190,24 @@ def main():
         if row["role"] == "reference":
             row["note"] = "参考材料（过往版本），不参与排名"
         elif jp.exists() and not a.machine_only:
+            # --bind：打分前给 judgments 写入 material_sha256。
+            # 绑过的不重复写（指纹没变就没必要动文件）。
+            if getattr(a, "bind", False):
+                try:
+                    _j = json.loads(jp.read_text(encoding="utf-8"))
+                    if not _j.get("material_sha256"):
+                        subprocess.run([sys.executable, str(HERE / "bind_judgments.py"),
+                                        str(out), "--only", stem],
+                                       capture_output=True, text=True)
+                except Exception:
+                    pass
             # 单份 judgments 坏了不能拖垮整批：报出来、继续下一份
-            r = subprocess.run([sys.executable, str(HERE / "score.py"), str(doc), "--checks", str(chk),
-                                "--judgments", str(jp), "--award", award, "--rubric", a.rubric,
-                                "--out", str(out)],
-                               capture_output=True, text=True)
+            score_args = [sys.executable, str(HERE / "score.py"), str(doc),
+                          "--checks", str(chk), "--judgments", str(jp),
+                          "--award", award, "--rubric", a.rubric, "--out", str(out)]
+            if getattr(a, "require_bound", False):
+                score_args.append("--require-bound")
+            r = subprocess.run(score_args, capture_output=True, text=True)
             if r.returncode != 0:
                 err = (r.stderr or "").strip().splitlines()
                 row["score_error"] = err[0][:120] if err else "打分失败"
@@ -362,6 +381,19 @@ def main():
             print("  …共 %d 项" % vs["missing_total"], file=sys.stderr)
         if strict:
             return 2
+    # --no-keep-judgments：清单写完就删 judgments，
+    # 避免答案留在输出目录，被下一个接手的人或 agent 直接看到并抄走。
+    if getattr(a, "no_keep_judgments", False):
+        gone = 0
+        for jf in out.glob("*.judgments.json"):
+            try:
+                jf.unlink()
+                gone += 1
+            except Exception:
+                pass
+        if gone:
+            print("已删除 %d 份 judgments（--no-keep-judgments）" % gone)
+
     print("清单：%s" % manifest)
     # 一份都没评分：这不是成功。要么奖项识别不了，要么 judgments 没对上。
     if not scored and submissions:

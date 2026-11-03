@@ -11,11 +11,15 @@
 3. 争议点反馈    —— 自动汇总冲突项成《争议点清单》，供答辩追问
 """
 from __future__ import annotations
-import argparse, json, re, sys
+import argparse, hashlib, json, re, sys
 from pathlib import Path
 
 BAND_DEFAULT = [("一等奖候选", 85), ("二等奖候选", 75), ("三等奖候选", 65), ("入围候选", 55), ("待提升", 0)]
 UNSCORED = -1.0
+
+
+class JudgmentsMismatch(Exception):
+    """judgments 与当前材料不匹配。"""
 
 
 class NoOnsiteError(Exception):
@@ -341,6 +345,54 @@ def _load_json(path: str, what: str):
         raise SystemExit(2)
 
 
+def material_fingerprint(doc: dict) -> str:
+    """材料指纹：由原文 plain 的规范化内容算 sha256。
+
+    用途：让一份 judgments 只能用在它当初针对的那份材料上。
+    换材料、换版本、换抽取结果，指纹都不同，score.py 直接拒收。
+
+    这是防"judgments 被另一台机器/另一个 agent 直接抄走"的机制——
+    抄来的判断即使分数一样，绑定不上当前材料也进不了评分。
+    """
+    plain = str((doc or {}).get("plain") or "")
+    # 归一化：只保留非空白字符，避免排版差异导致同材料指纹不同
+    norm = re.sub(r"\s+", "", plain)
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
+def check_judgments_binding(doc: dict, judgments: dict, allow_unbound: bool) -> None:
+    """校验 judgments 是否绑定到当前材料。
+
+    judgments 里可以有：
+      material_sha256   —— 写入时的材料指纹；有就必须一致
+      judged_by         —— 谁判的（信息性，不校验）
+      judged_at         —— 什么时候判的（信息性）
+
+    没有 material_sha256 的旧文件：allow_unbound=True 时放行并警告，
+    否则拒收。默认放行，因为存量 judgments 都是无绑定的。
+    """
+    claimed = (judgments or {}).get("material_sha256")
+    actual = material_fingerprint(doc)
+    if not claimed:
+        if allow_unbound:
+            print("[warn] 这份 judgments 没有 material_sha256，无法确认是针对当前材料的。"
+                  "建议用 scripts/bind_judgments.py 重新绑定。", file=sys.stderr)
+            return
+        raise JudgmentsMismatch(
+            "这份 judgments 没有 material_sha256（未绑定材料）。\n"
+            "  当前材料指纹：%s\n"
+            "  要么用 scripts/bind_judgments.py 绑定，要么加 --allow-unbound-judgments 放行。"
+            % actual[:16])
+    if claimed != actual:
+        raise JudgmentsMismatch(
+            "judgments 绑定的材料与当前材料不符，拒绝评分。\n"
+            "  judgments 里写的：%s\n"
+            "  当前材料实际是：%s\n"
+            "  常见原因：judgments 是从别处抄来的，或材料被改过。\n"
+            "  确认要用请加 --allow-unbound-judgments，或用 bind_judgments.py 重新绑定。"
+            % (str(claimed)[:16], actual[:16]))
+
+
 def main():
     ap = argparse.ArgumentParser(description="北斗奖申报材料评分")
     ap.add_argument("doc_json")
@@ -350,11 +402,21 @@ def main():
     ap.add_argument("--onsite", help="现场评审得分（可选，用于 75/25 合成与 10%% 争议判定）")
     ap.add_argument("--rubric", default=str(_default_rubric()))
     ap.add_argument("--out", default=".")
+    ap.add_argument("--require-bound", dest="require_bound",
+                    action="store_true",
+                    help="要求 judgments 必须绑定 material_sha256（默认放行未绑定的，兼容存量）")
     a = ap.parse_args()
     doc = _load_json(a.doc_json, "材料 doc.json")
     checks = _load_json(a.checks, "机检结果 checks.json")
     judg = _load_json(a.judgments, "评审判断 judgments.json")
     rub = _load_json(a.rubric, "评分卡")
+    try:
+        # 默认放行未绑定的（存量 judgments 都没有指纹），
+        # 加 --require-bound 才强制。这样既有测试和旧数据不用改。
+        check_judgments_binding(doc, judg, allow_unbound=not a.require_bound)
+    except JudgmentsMismatch as exc:
+        print("错误：" + str(exc), file=sys.stderr)
+        return 2
     try:
         res = score_one(doc, checks, judg, rub, a.award, a.onsite)
     except NoOnsiteError as exc:

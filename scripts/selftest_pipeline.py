@@ -671,6 +671,59 @@ def main() -> int:
             "证据在原文找不到" not in (r2.stdout or ""),
             "发现证据与原文不符")
 
+    # ---------- 10i. judgments 绑定与清理 ----------
+    print("\n[10i] judgments 绑定材料 + 跑完不留答案")
+    bj = ROOT / "scripts" / "bind_judgments.py"
+    rec("bind_judgments.py 存在", bj.is_file())
+    if bj.is_file():
+        bd = TMP / "bindt"; bd.mkdir(exist_ok=True)
+        jd2 = json.loads(jp.read_text(encoding="utf-8"))
+        for k in ("material_sha256", "material_name", "judged_at", "tool"):
+            jd2.pop(k, None)                 # 先清空绑定，模拟"从别处抄来"的判断
+        (bd / (AWARD + "-绑定测试.judgments.json")).write_text(
+            json.dumps(jd2, ensure_ascii=False), encoding="utf-8")
+        import shutil as _sh5
+        _sh5.copy(docx_path, bd / (AWARD + "-绑定测试.docx"))
+        # 先跑机检得到 doc.json / checks.json
+        run([ROOT / "scripts" / "batch.py", bd, "--out", bd, "--rubric", RUB, "--machine-only"])
+        r = run([bj, bd])
+        rec("绑定工具能跑通", r.returncode == 0)
+        jf2 = bd / (AWARD + "-绑定测试.judgments.json")
+        if jf2.is_file():
+            jb = json.loads(jf2.read_text(encoding="utf-8"))
+            rec("绑定后写入 material_sha256", bool(jb.get("material_sha256")))
+
+            # ① 绑定正确 → 应通过
+            r = run([ROOT / "scripts" / "score.py",
+                     str(bd / (AWARD + "-绑定测试.doc.json")),
+                     "--checks", str(bd / (AWARD + "-绑定测试.checks.json")),
+                     "--judgments", str(jf2), "--award", AWARD,
+                     "--rubric", RUB, "--out", str(bd)])
+            rec("指纹匹配时正常评分", r.returncode == 0)
+
+            # ② 改成别的材料 → 必须拒收
+            jb["material_sha256"] = "0" * 64
+            jf2.write_text(json.dumps(jb, ensure_ascii=False), encoding="utf-8")
+            r = run([ROOT / "scripts" / "score.py",
+                     str(bd / (AWARD + "-绑定测试.doc.json")),
+                     "--checks", str(bd / (AWARD + "-绑定测试.checks.json")),
+                     "--judgments", str(jf2), "--award", AWARD,
+                     "--rubric", RUB, "--out", str(bd)])
+            rec("指纹不符时拒收", r.returncode == 2,
+                "退出码 %d" % r.returncode)
+
+    # ③ --no-keep-judgments 必须真的删掉
+    nk = TMP / "nkt"; nk.mkdir(exist_ok=True)
+    import shutil as _sh6
+    _sh6.copy(docx_path, nk / (AWARD + "-清理测试.docx"))
+    (nk / (AWARD + "-清理测试.judgments.json")).write_text(
+        jp.read_text(encoding="utf-8"), encoding="utf-8")
+    r = run([ROOT / "scripts" / "batch.py", nk, "--out", nk, "--rubric", RUB,
+             "--no-keep-judgments"])
+    left = list(nk.glob("*.judgments.json"))
+    rec("--no-keep-judgments 跑完不留 judgments", not left,
+        "还剩 %d 份" % len(left))
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
