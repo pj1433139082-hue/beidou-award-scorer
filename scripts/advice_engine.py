@@ -170,8 +170,11 @@ DIM_FALLBACK: dict[str, dict] = {
     },
     "novelty": {
         "title": "创新性论证不足，缺与原有做法的量化差异",
-        "how": "点明与原有做法的差别：同一场景下新旧方案的指标差，并说明差异来自哪个技术点。",
-        "revised": "相较原有 X 方案，本方案在 X 指标上提升 X%，差异来自 X 技术点。",
+        "how": "点明与原有做法的差别：同一场景下新旧方案的指标差，并说明差异来自哪个技术点。"
+               "把下句括号里的内容换成你自己的数据即可。",
+        "revised": "相较原有的（填：原做法名称）方案，本方案使（填：指标名，如吨水电耗）"
+                   "由（填：改造前数值）降至（填：改造后数值），降幅（填：百分比），"
+                   "差异主要来自（填：技术点，如「一表多点」采样带来的分区控制能力）。",
     },
     "intelligence": {
         "title": "智能化水平证据不足",
@@ -201,6 +204,21 @@ DIM_FALLBACK: dict[str, dict] = {
     },
 }
 
+# 纯格式 / 形式类检查：不写进修改意见。
+# 理由：下划线没填、缺截图这类问题肉眼可见，写进意见是噪音，
+# 会把真正需要论证补强的建议挤下去。这些由机检报告自己提示即可。
+#   C09 占位符未填（下划线、XXXX）
+#   C17 缺运行截图
+FORMAT_ONLY = {"C09", "C17"}
+
+# 补充材料能把该维度失分追回多少比例。
+# 依据：证据等级反映论证强度，补数据能提高档次但通常回不到满分。
+#   A 已有充分证据，只差业务结果 → 补齐后基本能拿满
+#   B 论证方向对但不充分 → 补量化数据可追回大半
+#   C 偏定性 → 补数字与佐证，追回一半左右
+#   D 几乎没有证据 → 相当于重写，短期只能追回三成
+RECOVER_RATE = {"A": 0.9, "B": 0.6, "C": 0.5, "D": 0.3}
+
 NOISE = ("参赛赛道", "申报单位", "项目名称", "填报", "目录")
 HEADING = re.compile(r"^\s*(\[H\d\]\s*)?(\d+(\.\d+)*\s*)?[^。；]{0,30}$")
 
@@ -222,24 +240,50 @@ HINTS = {
 }
 
 
-def find_original(plain: str, keywords: list[str], max_len: int = 76) -> str:
-    """从原文里找一句能说明问题的句子，作为「原文是什么」。
-
-    要求命中 >= 2 个线索词，跳过标题行、封面字段，否则会挑出
-    「参赛赛道：成果应用赛道 金火炬」这种对问题毫无说明力的句子。
-    """
-    if not plain:
-        return ""
-    for s in re.split(r"[。；\n]", plain):
+def _candidates(plain: str):
+    """原文里可引用的句子，已滤掉标题行与封面字段。"""
+    for s in re.split(r"[。；\n]", plain or ""):
         s = s.strip()
-        if not (12 <= len(s) <= 200):
+        if not (12 <= len(s) <= 240):
             continue
         if any(n in s for n in NOISE):
             continue
         if HEADING.match(s) and "。" not in s and len(s) < 40:
             continue
-        if sum(1 for k in keywords if k in s) >= 2:
-            return s if len(s) <= max_len else s[: max_len - 1] + "…"
+        yield s
+
+
+def find_original(plain: str, keywords: list[str], max_len: int = 76,
+                  fallback_terms: list[str] | None = None) -> str:
+    """从原文里找一句能说明问题的句子，作为「原文是什么」。
+
+    三级匹配，宁可少一句也不要给一句废话：
+      1. 命中 >= 2 个线索词        —— 最能说明问题
+      2. 命中 >= 1 个线索词 或 维度名 —— 次之
+      3. 命中任意 fallback 词      —— 兜底
+
+    跳过标题行、封面字段，否则会挑出「参赛赛道：成果应用赛道 金火炬」这种
+    对问题毫无说明力的句子。
+    """
+    if not plain:
+        return ""
+    bands = [
+        lambda s: sum(1 for k in keywords if k in s) >= 2,
+        lambda s: sum(1 for k in keywords if k in s) >= 1,
+        lambda s: bool(fallback_terms) and any(t in s for t in (fallback_terms or [])),
+    ]
+    for hit in bands:
+        for s in _candidates(plain):
+            if hit(s):
+                return s if len(s) <= max_len else s[: max_len - 1] + "…"
+    # 完全没有匹配：给该材料最长的一段（通常是最有内容的正文），并注明是概括
+    best = ""
+    for s in _candidates(plain):
+        if len(s) > len(best):
+            best = s
+    if best:
+        cut = best if len(best) <= max_len else best[: max_len - 1] + "…"
+        return "（未找到直接对应的原句，以下为材料中的相关表述）" + cut
     return ""
 
 
@@ -273,7 +317,7 @@ def build_items(row: dict) -> list[dict]:
         if cap_by_dim.get(did):
             cids.append(cap_by_dim[did])
         for cid, c in checks.items():
-            if c.get("status") not in ("warn", "fail"):
+            if c.get("status") not in ("warn", "fail") or cid in FORMAT_ONLY:
                 continue
             rule = RULES.get(cid)
             if not rule:
@@ -308,10 +352,27 @@ def build_items(row: dict) -> list[dict]:
             ev = (checks.get(cid) or {}).get("evidence") or []
             orig = ""
             if ev:
-                # 机检给了定位（表几行几 / 原句），直接用
-                orig = "；".join(str(x) for x in ev[:2])
+                # 机检给的定位可能是「表3 行3」这种简短坐标——单独看说明不了问题，
+                # 补一句该坐标的上下文，或与被引原句一起给出。
+                pos = [str(x) for x in ev if re.match(r"^表\s*\d+", str(x))]
+                quote = [str(x) for x in ev if not re.match(r"^表\s*\d+", str(x))]
+                parts = []
+                if quote:
+                    parts.append(quote[0])
+                if pos:
+                    parts.append("位置：" + "、".join(pos[:3]))
+                orig = "；".join(parts) if parts else "；".join(str(x) for x in ev[:2])
             else:
                 orig = find_original(plain, HINTS.get(cid, []))
+            if not orig:
+                # 把维度名与检查名当线索再找一次，仍找不到才退回证据等级说明
+                kw = HINTS.get(cid, []) + [dim["name"]]
+                orig = find_original(plain, kw)
+            if len(orig) < 12:
+                # 定位太短（如「表3 行3」）时，用机检 detail 补充说明问题在哪
+                det = (checks.get(cid) or {}).get("detail") or ""
+                if det:
+                    orig = (orig + "　—　" + det) if orig else det
             if not orig:
                 orig = _cap_or_grade(row, dim, plain, did)
             items.append({
@@ -321,9 +382,9 @@ def build_items(row: dict) -> list[dict]:
                 "how": rule["how"], "revised": rule["revised"], "loss": loss,
             })
 
-    # 全局项（占位符、截图等）单独成条，挂到"材料整体"
+    # 全局项（截图、模板等）单独成条，挂到"材料整体"；格式类跳过
     for cid, rule in RULES.items():
-        if "_global" not in rule["dims"]:
+        if "_global" not in rule["dims"] or cid in FORMAT_ONLY:
             continue
         c = checks.get(cid)
         if not c or c.get("status") not in ("warn", "fail"):
@@ -341,20 +402,65 @@ def build_items(row: dict) -> list[dict]:
     items.sort(key=lambda x: -x["loss"])
     for i, it in enumerate(items, 1):
         it["no"] = "M%02d" % i
+
+    # ---- 分派「预计改完提升」 ----
+    # 两个必须处理的现实：
+    #   1. 同一维度的失分只能计一次——经济效益 20 分同时被 C07、C08 命中时，
+    #      两条各写 20 分相加就是 40 分，虚报一倍。记在首条，其余注明合并计入。
+    #   2. 补齐材料拿不回该维度的全部分数——证据等级 B/C 意味着论证强度不足，
+    #      补数据能让它往上走一档，不等于直接满分。按等级给定回收系数。
+    dim_grade = {d["id"]: (d.get("verified_grade") or "") for d in (row.get("dimensions") or [])}
+    seen: set[str] = set()
+    for it in items:
+        d = it["dim_id"]
+        if d == "_global":
+            it["gain"] = 0.0
+            it["gain_note"] = "材料整体项，不计入维度分数"
+            continue
+        if d in seen:
+            it["gain"] = 0.0
+            it["gain_note"] = "与同维度首条合并计入"
+            continue
+        seen.add(d)
+        rate = RECOVER_RATE.get(dim_grade.get(d, ""), 0.5)
+        it["gain"] = round(it["loss"] * rate, 1)
+        it["gain_note"] = "可追回该维度失分的 %d%%（证据等级 %s）" % (
+            int(rate * 100), dim_grade.get(d) or "未知")
     return items
 
 
+def total_gain(items: list[dict], ai_score: float) -> float:
+    """把列出的建议全改完，总分能提升多少（不超过 100 分）。"""
+    g = sum(it.get("gain") or 0.0 for it in items)
+    return round(min(g, max(0.0, 100.0 - float(ai_score or 0))), 1)
+
+
+# 每个维度"该有什么证据"，用于证据不足时给出可查的缺口
+DIM_EVIDENCE = {
+    "value": "效益金额、基准值、计算口径、佐证材料",
+    "replication": "推广清单（大区/区域/厂站）、部署时间、可复制原因",
+    "novelty": "与原有做法的同场景指标对照、技术点差异说明",
+    "intelligence": "模型实验室部署记录、试点厂调用日志、≥90 天运行数据",
+    "promotion": "推广台账、覆盖规模、单厂部署周期",
+    "economics": "计算步骤表（公式/代入值/中间结果）、投入与收益明细",
+    "readiness": "产品形态说明、合同/订单/收入、产品与运维手册",
+    "usability": "战略对应关系、卡点现状数据、解决方案匹配",
+    "iteration": "版本号、相较上届改了什么、指标提升多少",
+}
+
+
 def _cap_or_grade(row, dim, plain, did) -> str:
-    """没有具体原文时，用封顶原因或证据等级说明「原文哪里不好」。"""
+    """没有具体原文时，说明「缺什么证据」——比空泛说"论证不足"更有指向。"""
     if dim.get("cap_reason"):
         return dim["cap_reason"]
     g = dim.get("verified_grade") or ""
+    need = DIM_EVIDENCE.get(did, "量化数据与佐证材料")
     return {
-        "A": "证据等级 A，但业务条件未完全达成，该项仍失分",
-        "B": "证据等级 B：有论证但不够充分，缺少可核验的量化数据",
-        "C": "证据等级 C：论证薄弱，多为定性描述，缺具体数字与佐证",
-        "D": "证据等级 D：几乎没有可引用的证据",
-    }.get(g, "该维度论证不足，未定位到具体原文问题")
+        "A": "该维度业务条件未完全达成，仍失分；需补充：%s" % need,
+        "B": "论证方向对但证据强度不足（等级 B），缺可核验的量化数据；需补充：%s" % need,
+        "C": "论证偏定性（等级 C），缺具体数字与佐证；需补充：%s" % need,
+        "D": "几乎没有可引用的证据（等级 D）；需补充：%s" % need,
+    }.get(g, "该维度证据不足；需补充：%s" % need)
 
 
 def _global_points(cid: str) -> float:

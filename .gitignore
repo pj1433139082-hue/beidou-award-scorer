@@ -10,3 +10,6 @@ out/
 dist/
 build/
 *.zip
+
+# 真实赛事评分卡不进公开库（公开的只有 rubric.example.json）
+assets/rubric.json

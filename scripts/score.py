@@ -51,8 +51,24 @@ def validate_rubric_bands(rubric):
     if problems:
         raise SystemExit("rubric 证据分档非法（会命中多个档）：" + "；".join(problems))
     return True
-GRADE_FACTOR = {"A": 1.0, "B": 0.85, "C": 0.70, "D": 0.50}
+# 证据等级封顶系数**只从 rubric 读**，不再在代码里另存一套。
+# 历史问题：这里曾有 GRADE_FACTOR = {A:1.0, B:0.85, C:0.70, D:0.50}，
+# 与 rubric evidence_grades[*].cap（A:1.0, B:0.75, C:0.50, D:0.20）不一致。
+# 后果：引文被拒导致降级时，分数会突破 rubric 明文写的上限——
+# 例 max=25 降 C 级，rubric 上限 12.5，实际却给到 17.5（多 5 分）。
+# 现在统一由 grade_cap_value() 从 rubric 取值，代码里不再有第二套常数。
 ORDER = ["D", "C", "B", "A"]
+
+
+def grade_cap_value(rubric: dict, grade: str) -> float:
+    """某证据等级能拿到的分数上限（比例）。唯一来源是 rubric。"""
+    eg = (rubric or {}).get("evidence_grades") or {}
+    spec = eg.get(grade) or {}
+    cap = spec.get("cap")
+    if isinstance(cap, (int, float)):
+        return float(cap)
+    # rubric 没写就用最保守的，不猜
+    return {"A": 1.0, "B": 0.75, "C": 0.5, "D": 0.2}.get(grade, 0.5)
 
 def norm(s):
     return re.sub(r"\s+", "", str(s or ""))
@@ -95,7 +111,14 @@ def apply_machine(checks, awards_caps):
     if st("C04") == "warn": cap("value", 0.85, "部分已实现效益缺佐证材料", "C04")
     if st("C05") == "warn": deduct(2, "变化率自述与复算不符（偏差>5pp）", "D2 正文数字与测算不一致", "C05")
     if st("C08") == "warn": deduct(3, "同一金额多处出现，存在重复计入风险", "D1 重复计入", "C08")
-    if st("C09") == "warn": deduct(2, "存在未填写占位（下划线/XXXX/（文本））", "材料完成度", "C09")
+    # C09 占位符 / C17 缺截图：**只提醒，不扣分**（用户 2026-11-03 确认）。
+    # 理由：这类是格式完成度问题，大家交稿后肯定会改，扣分对创新性评价没有意义；
+    # 而且它们会被误当成"内容不行"的证据，把真正需要论证补强的问题挤下去。
+    # 处理方式：写进 disputes（争议点）提醒申报人自查，不进 deductions。
+    if st("C09") == "warn":
+        gates.append({"dim": "_global", "type": "notice",
+                      "why": "存在未填写占位（下划线/XXXX/（文本）），请自查补全（不扣分）",
+                      "check": "C09"})
     if st("C11") == "fail": cap("intelligence", 0.40, "未见模型实验室部署或试点厂生产调用证据", "C11")
     if st("C11") == "warn": cap("intelligence", 0.70, "实验室/试点厂证据不全，或缺 >=90 天运行验证", "C11")
     if st("C12") == "warn": cap("readiness", 0.65, "产品就绪度未达「已实现产品转化」", "C12")
@@ -104,7 +127,10 @@ def apply_machine(checks, awards_caps):
     if st("C14") == "warn": cap("novelty", 0.80, "有对比表述但缺量化对照", "C14")
     if st("C15") == "warn": cap("usability", 0.80, "战略对齐或卡点描述缺一项", "C15")
     if st("C16") == "warn": cap("value", 0.85, "预计性表述偏多，包装风险", "C16")
-    if st("C17") == "fail": deduct(2, "全文无图片/截图证据", "D4 截图缺失", "C17")
+    if st("C17") == "fail":
+        gates.append({"dim": "_global", "type": "notice",
+                      "why": "全文无图片/截图证据，建议补充运行界面或台账截图（不扣分）",
+                      "check": "C17"})
     if awards_caps and st("C13") == "fail":
         # 「成果迭代性」是**否决项，不是加分项**（用户 2026-11-02 确认）——
         # 所以它不进入 dimensions、不占分值、不加分。
@@ -150,8 +176,10 @@ def score_one(doc, checks, judgments, rubric, award, onsite=None):
         grade = grade_cap(len(ok), claimed)
         cap = caps.get(d["id"], 1.0)
         after_cap = min(raw, d["max"] * cap)
-        # 证据等级只在"降级"时生效：降一级按该等级系数收缩，避免"无证据也能拿高分"
-        final = after_cap if grade == claimed else min(after_cap, d["max"] * GRADE_FACTOR[grade])
+        # 证据等级上限始终生效（不只是降级时）。
+        # 之前只在降级时才收缩，等于"评审员自报的等级不受 rubric 上限约束"，
+        # 这让 rubric 写的 cap 形同虚设。现在任何等级都受其 cap 约束。
+        final = min(after_cap, d["max"] * grade_cap_value(rubric, grade))
         rows.append({
             "id": d["id"], "name": d["name"], "max": d["max"], "official": d["official"],
             "llm_raw": round(raw, 1), "claimed_grade": claimed, "verified_grade": grade,
@@ -176,11 +204,19 @@ def score_one(doc, checks, judgments, rubric, award, onsite=None):
     if veto: band = "否决（不入围）"
     elif veto_pending: band = "暂列「%s」，否决项待综合审议确认" % band
 
+    # 只提醒不扣分的机检项：在争议点里明确标注，避免被当成扣分
+    NOTICE_ONLY = {"C09": "格式问题，建议自查补全，不扣分",
+                   "C17": "建议补充截图，不扣分"}
+
     disputes = []
     for chk in checks["checks"]:
         if chk["status"] in ("warn", "fail"):
+            note = NOTICE_ONLY.get(chk["id"])
+            point = "%s：%s" % (chk["name"], chk["detail"])
+            if note:
+                point += "　（%s）" % note
             disputes.append({"source": "机检 " + chk["id"],
-                             "point": "%s：%s" % (chk["name"], chk["detail"]),
+                             "point": point,
                              "evidence": chk.get("evidence", [])[:3]})
     for r in rows:
         for b in r["quotes_rejected"]:

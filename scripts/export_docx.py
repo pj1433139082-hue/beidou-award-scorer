@@ -27,10 +27,10 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from advice_engine import build_items  # noqa: E402
 
+# 白底黑字：正文纯黑，辅助信息深灰。不用任何彩色——打印和复印都不失真，
+# 也不让颜色去暗示"重要程度"，重要性靠文字排序表达。
 BLACK = RGBColor(0, 0, 0)
 GREY = RGBColor(0x55, 0x55, 0x55)
-ACCENT = RGBColor(0x0B, 0x6B, 0x57)
-FIXED = RGBColor(0x0B, 0x4F, 0x3F)
 FONT = "微软雅黑"
 
 
@@ -70,7 +70,7 @@ def para(doc, text="", size=10.5, bold=False, color=BLACK, italic=False,
 
 
 def h(doc, text, size=11, before=10):
-    return para(doc, text, size=size, bold=True, color=ACCENT, before=before, after=4, keep=True)
+    return para(doc, text, size=size, bold=True, color=BLACK, before=before, after=4, keep=True)
 
 
 def seg_label(doc, text):
@@ -145,17 +145,21 @@ def build(data: dict, out_path, doc=None, mat_index: int = 0):
         pf.space_after = Pt(1)
         pf.keep_with_next = True
         no = ("%d-%s" % (mat_index, it["no"])) if mat_index else it["no"]
-        set_run(p.add_run(no + "　"), size=10.5, bold=True, color=ACCENT)
+        set_run(p.add_run(no + "　"), size=10.5, bold=True, color=BLACK)
         set_run(p.add_run("%s　%s" % (it["dim"], it["title"])), size=10.5, bold=True)
-        if it["loss"] > 0.01:
-            set_run(p.add_run("　（可追回 %s 分）" % it["loss"]), size=9, color=GREY)
+        # 与 Excel 一致：用按证据等级折算后的"预计提升"，而不是原始失分
+        g = it.get("gain") or 0.0
+        if g > 0:
+            set_run(p.add_run("　（预计提升 %.1f 分）" % g), size=9, color=GREY)
+        elif it.get("gain_note"):
+            set_run(p.add_run("　（%s）" % it["gain_note"]), size=8.5, color=GREY)
 
         seg_label(doc, "原文是什么")
         body_text(doc, it["original"] or "（该项未定位到具体原文，见问题描述）")
         seg_label(doc, "怎么改")
         body_text(doc, it["how"])
         seg_label(doc, "修改之后的句子（可直接复制）")
-        body_text(doc, it["revised"], color=FIXED)
+        body_text(doc, it["revised"], color=BLACK)
 
     ds = data.get("disputes") or []
     if ds:
@@ -164,11 +168,74 @@ def build(data: dict, out_path, doc=None, mat_index: int = 0):
             para(doc, "%d. %s" % (i, (x.get("point") or "").strip()),
                  size=10, indent=0.5, after=2)
 
-    para(doc, "分数为自动机检 + 证据定级结果，需人工复核后方可作为评审结论。",
-         size=8.5, color=GREY, italic=True, before=10)
+    # 四、免责说明：把"这份分数能当什么用、不能当什么用"写清楚，
+    # 避免被当成评审结论直接引用。
+    h(doc, "四、免责说明")
+    for line in (
+        "1. 本意见由自动机检与证据定级生成，需人工复核后方可作为评审结论。",
+        "2. 分数区间为相对刻度（85/75/65/55），不是官方切线。",
+        "3. 机检只能核验材料是否写明、是否自相矛盾，不能判断内容是否属实。",
+        "4. 「预计提升」为按证据等级折算的估算值"
+        "（A 追回 90%、B 60%、C 50%、D 30%），表示补齐材料后可能追回的分数，不代表承诺。",
+    ):
+        para(doc, line, size=9, color=GREY, indent=0.5, after=2)
 
     if out_path is not None:
         doc.save(str(out_path))
+    return out_path
+
+
+def build_reference_note(name: str, plain: str, out_path):
+    """为参考材料（过往版本等）生成一份说明，而不是直接跳过。
+
+    为什么要有：文件夹里材料数比评分表多一份时，领导会问"少的那份呢"。
+    与其让人猜，不如给一页纸说清楚：它是什么、为什么不排名、它有什么用。
+    """
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width, sec.page_height = Cm(21), Cm(29.7)
+    sec.left_margin = sec.right_margin = Cm(2.2)
+    sec.top_margin = sec.bottom_margin = Cm(2.0)
+    st = doc.styles["Normal"]
+    st.font.name = FONT; st.font.size = Pt(10.5)
+    st.element.rPr.rFonts.set(qn("w:eastAsia"), FONT)
+
+    title = strip_award(name)
+    if len(title) > 28 and "——" in title:
+        main, sub = title.split("——", 1)
+        para(doc, main.strip(), size=12.5, bold=True, after=1)
+        para(doc, "——" + sub.strip(), size=10.5, bold=True, color=GREY, after=3)
+    else:
+        para(doc, title, size=12.5, bold=True, after=3)
+    para(doc, "性质：参考材料（非参赛项目）", size=9.5, color=GREY, after=2)
+
+    h(doc, "一、为什么不计入排名")
+    for line in (
+        "本文件的名称含「过往版本」，判定为同一项目的上一版材料，不是独立参赛项目。",
+        "把它当参赛项目排名会造成两个问题：一是虚增参赛数量；二是让人拿同一个项目跟自己比。",
+    ):
+        para(doc, line, size=10, indent=0.5, after=3)
+
+    h(doc, "二、它有什么用")
+    for line in (
+        "1. 作为当前版本的迭代对照：可据此写「相较上一版本改了什么、指标提升多少」。",
+        "2. 核对迭代声明：若当前版本声称有改进，可用本版本比对是否属实。",
+    ):
+        para(doc, line, size=10, indent=0.5, after=3)
+
+    # 声明的赛道（帮人判断它原本投的是哪个奖）
+    m = re.search(r"参赛赛道\s*[：:]\s*([^\n\r]{2,40})", (plain or "")[:3000])
+    if m:
+        h(doc, "三、正文声明的赛道")
+        para(doc, m.group(1).strip(), size=10, indent=0.5, after=3)
+        para(doc, "注意：若与文件名前缀不一致，说明改赛道后未改名，"
+                  "评分时应以正文声明为准。", size=9.5, color=GREY, indent=0.5, after=3)
+
+    h(doc, "四、免责说明")
+    para(doc, "本文件不含评分。参考材料不参与排名，也不计入平均分与统计口径。",
+         size=9, color=GREY, indent=0.5, after=2)
+
+    doc.save(str(out_path))
     return out_path
 
 
@@ -244,10 +311,27 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     for mi, r in enumerate(rows, 1):
         build(r, out / (r["_stem"] + ".docx"), mat_index=mi)
+
+    # 参考材料（过往版本等）：没有 score.json，但也要给一份说明，
+    # 否则文件夹里的份数比评分表少，读者会以为漏了。
+    from material_role import is_reference
+    scored = {r["_stem"] for r in rows}
+    for df in sorted(src.glob("*.doc.json")):
+        stem = df.name.replace(".doc.json", "")
+        if stem in scored or not is_reference(stem):
+            continue
+        try:
+            plain = json.loads(df.read_text(encoding="utf-8")).get("plain", "")
+        except Exception:
+            plain = ""
+        build_reference_note(stem, plain, out / (stem + ".docx"))
+        say_ref = getattr(sys, "_ref_note_count", 0) + 1
+        sys._ref_note_count = say_ref
     if a.merge:
         build_merged(rows, out / "北斗奖评分意见汇总.docx")
-    print(json.dumps({"out": str(out), "count": len(rows), "merged": bool(a.merge)},
-                     ensure_ascii=False))
+    print(json.dumps({"out": str(out), "count": len(rows),
+                      "reference_notes": getattr(sys, "_ref_note_count", 0),
+                      "merged": bool(a.merge)}, ensure_ascii=False))
     return 0
 
 

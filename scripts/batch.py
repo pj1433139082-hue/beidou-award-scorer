@@ -242,6 +242,8 @@ def main():
 
         # Word：每份一份 + 一本汇总册
         if getattr(a, "with_docx", False):
+            # 全部交付物落到同一个 --out 目录：Excel、Word、PDF 都在一起，
+            # 领导打开一个文件夹就能看全，不用在两处找。
             r = subprocess.run([sys.executable, str(HERE / "export_docx.py"), str(out),
                                 "--out", str(out), "--merge"],
                                capture_output=True, text=True)
@@ -312,6 +314,28 @@ def main():
             print("严格模式失败：" + msg, file=sys.stderr)
             return 2
         print("提示：" + msg)
+
+    # 格式验收：文件在不在由 verify_outputs 管，格式对不对由 verify_format 管。
+    # 分开两个脚本是有意的——避免一个脚本承担两种判断，也方便单独重跑。
+    vf_args = [sys.executable, str(HERE / "verify_format.py"), str(out), "--json"]
+    if not getattr(a, "with_docx", False):
+        vf_args.append("--no-word")     # 没要求出 Word，就不查 Word 格式
+    if not getattr(a, "with_pdf", False):
+        vf_args.append("--no-pdf")
+    vf = subprocess.run(vf_args, capture_output=True, text=True)
+    if vf.stdout.strip():
+        try:
+            fs = json.loads(vf.stdout)
+            if fs.get("ok"):
+                print("格式验收通过：%d 项" % len(fs.get("checks") or []))
+            else:
+                print("格式验收未通过 %d 项：" % len(fs.get("failed") or []), file=sys.stderr)
+                for nm in (fs.get("failed") or [])[:6]:
+                    print("  · " + nm, file=sys.stderr)
+                if getattr(a, "strict", False):
+                    return 2
+        except Exception:
+            pass
 
     # 调独立核验脚本，逐项确认产物齐全
     vargs = [sys.executable, str(HERE / "verify_outputs.py"), str(out)]

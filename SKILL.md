@@ -67,7 +67,7 @@ Plus, once per batch:
 | File | What it is |
 |---|---|
 | `leaderboard.md` | ranking |
-| `北斗奖评分汇总.xlsx` | 3 sheets: summary / per-dimension detail / dispute list |
+| `北斗奖评分汇总.xlsx` | **one sheet**: each material is a row (score, bands, dimension cells, projected gain, projected total) with its advice lines and dispute block directly beneath |
 | `北斗奖评分意见汇总.docx` | all review notes in one volume (cover + contents) |
 | `北斗奖评分意见汇总.pdf` | the same volume as PDF |
 
@@ -87,6 +87,18 @@ python scripts/verify_outputs.py out/ --expect-docx --expect-pdf
 
 It compares what should exist against what does, and exits 1 if anything is missing. `batch.py`
 writes `manifest.json` (every file with its size) and runs this check itself at the end.
+
+**Format is checked too, not just presence:**
+
+```bash
+python scripts/verify_format.py out/
+```
+
+17 assertions covering: one sheet only, headers present, no blank rows, subtotals and grand total,
+no coloured text in Word, four-section structure, three-part advice, PDF count matches docx,
+format checks carry no deduction, and the M-numbers in Excel and Word are the same set.
+`batch.py` runs it automatically; you do not need to open a single file to know whether the layout
+is right.
 
 For a pipeline where a missing file must stop the run:
 
@@ -165,9 +177,31 @@ Award names are whatever keys your rubric defines; `--award` must match one of t
 | C13 result iteration (award-specific) | warn | treated as "needs confirmation" (mentions iteration but no comparison anchor) — **does not trigger the veto** |
 | C13 result iteration (award-specific) | fail | **veto pending review** — **the score is entirely unaffected** (iteration is not a dimension: it carries no points, adds nothing, deducts nothing); only the dispute is pinned to the top and the band is annotated "pending review" |
 
-Fixed deductions (D1 duplicate benefit −3, D2 number mismatch −2, D3 missing baseline −2, D4 missing screenshots −2, leftover placeholders −2) apply to the subtotal.
+Fixed deductions apply to the subtotal: D1 duplicate benefit −3, D2 number mismatch −2, D3 missing baseline −2.
+
+**Format problems are flagged, never deducted** — see the section below.
 
 Check IDs and their award scoping live in `scripts/checks.py`; edit that file and the rubric together when changing an award's criteria.
+
+### Format problems are flagged, not deducted
+
+Two checks describe how finished the document is, not how good the work is:
+
+| Check | What it sees | Treatment |
+|---|---|---|
+| C09 | leftover placeholders (underscores, XXXX, 待填) | dispute only, **no deduction** |
+| C17 | no screenshots or images anywhere | dispute only, **no deduction** |
+
+Both still appear in the dispute list, annotated 不扣分, so the submitter knows to fix them.
+
+Why: these are things everyone fixes before submitting — a placeholder in a draft says nothing
+about whether the innovation is sound. Deducting points for them does real damage twice over:
+it lowers a score for a cosmetic reason, and it pushes a trivial item into the ranked advice list
+where it competes with the argument that actually needs strengthening. A submission with twelve
+unfilled underscores is not twelve times worse than one with a single placeholder.
+
+The check still runs and still reports, because a reviewer needs to know the document is
+unfinished. It just does not move the number.
 
 ## How result iteration (C13) is judged
 
