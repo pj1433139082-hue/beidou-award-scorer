@@ -243,14 +243,23 @@ def main() -> int:
     # batch 需要 judgments 才打分；先放好
     shutil.copy(jp, bdir / ("%s-测试材料.judgments.json" % AWARD))
     r = run([ROOT / "scripts" / "batch.py", bdir, "--out", bdir,
-             "--rubric", RUB])
+             "--rubric", RUB, "--with-docx"])
     ok = r.returncode == 0
-    has_lb = (bdir / "leaderboard.md").is_file()
-    has_xl = (bdir / "北斗奖评分汇总.xlsx").is_file()
-    scored = "1 份有评分" in r.stdout
-    rec("batch 产出 leaderboard.md", has_lb)
-    rec("batch 产出 Excel", has_xl)
-    rec("batch 完成打分（非仅机检）", scored, (r.stdout.strip().splitlines() or [""])[-1][:60])
+    stem = AWARD + "-测试材料"
+    # 一份材料跑完必须产出这些文件——少任何一个都算流程不完整
+    NEED = [stem + ".doc.json", stem + ".checks.json", stem + ".score.json",
+            stem + ".report.md", stem + ".docx", "leaderboard.md", "北斗奖评分汇总.xlsx"]
+    missing = [x for x in NEED if not (bdir / x).is_file()]
+    rec("batch 产出完整文件集", not missing,
+        "缺 %s" % missing if missing else "7 类文件齐全")
+    rec("batch 完成打分（非仅机检）", "1 份有评分" in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[-1][:50])
+    # 汇总册
+    merged = list(bdir.glob("*汇总*.docx"))
+    rec("batch 产出 Word 汇总册", bool(merged), merged[0].name if merged else "未生成")
+    # PDF 是可选的（依赖 LibreOffice），只验证脚本存在且能跑出预期返回
+    pdf_script = ROOT / "scripts" / "export_pdf.py"
+    rec("PDF 导出脚本存在", pdf_script.is_file())
 
     # ---------- 8. 打包 ----------
     print("\n[8] 打包 + 包内自检")

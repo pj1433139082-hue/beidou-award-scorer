@@ -45,6 +45,38 @@ Run `python scripts/setup.py` once. If it reports a missing dependency, run
 `python scripts/setup.py --install` and tell the user what was installed. If `setup.py` cannot run
 at all (no Python on PATH), say so plainly and point at the install command — do not proceed to scoring.
 
+## One command, complete output
+
+```bash
+python scripts/batch.py "<材料目录>" --out out/ --rubric assets/rubric.example.json --all
+```
+
+`--all` = `--with-docx --with-pdf`. One run produces, per submission:
+
+| File | What it is |
+|---|---|
+| `<name>.doc.json` | extracted text and tables |
+| `<name>.checks.json` | the 20 deterministic checks, each with evidence |
+| `<name>.score.json` | dimension scores, caps, deductions, disputes |
+| `<name>.report.md` | readable report |
+| `<name>.docx` | the review note: what is wrong in the original, and how to fix it |
+| `<name>.pdf` | same, rendered to PDF (when LibreOffice is available) |
+
+Plus, once per batch:
+
+| File | What it is |
+|---|---|
+| `leaderboard.md` | ranking |
+| `北斗奖评分汇总.xlsx` | 3 sheets: summary / per-dimension detail / dispute list |
+| `北斗奖评分意见汇总.docx` | all review notes in one volume (cover + contents) |
+| `北斗奖评分意见汇总.pdf` | the same volume as PDF |
+
+PDF needs LibreOffice. Without it the run still succeeds; it prints that PDF was skipped and you
+keep the Word files. Point `BD_SOFFICE` at `soffice.exe`, or set `BD_KIT_NODE` and `BD_KIT_CLI`
+to use a bundled LibreOffice Kit.
+
+Omit `--all` to get only JSON / Markdown / Excel.
+
 ## Workflow
 
 ```
