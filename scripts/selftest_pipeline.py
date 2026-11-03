@@ -724,6 +724,35 @@ def main() -> int:
     rec("--no-keep-judgments 跑完不留 judgments", not left,
         "还剩 %d 份" % len(left))
 
+    # ---------- 10j. 三种运行模式 ----------
+    print("\n[10j] init / refine / compare 模式")
+    md = ROOT / "scripts" / "modes.py"
+    rec("modes.py 存在", md.is_file())
+    if md.is_file():
+        r = run([md, "init", bdir, "--out", str(TMP / "m0")])
+        rec("init 模式给隔离步骤", r.returncode == 0 and "isolate.py" in (r.stdout or ""))
+
+        # refine：必须把上次的建议摆出来，且明确要求重新思考。
+        # 用 out（含 score.json 的目录），不是 bdir。
+        r = run([md, "refine", out, "--baseline", out, "--out", str(TMP / "m1")])
+        rec("refine 模式能跑通", r.returncode == 0,
+            (r.stderr or "")[-120:] if r.returncode else "")
+        pack = TMP / "m1" / "反思输入包.md"
+        rec("refine 产出反思输入包", pack.is_file())
+        if pack.is_file():
+            txt = pack.read_text(encoding="utf-8")
+            rec("反思包含「必须回答的问题」", "必须回答的问题" in txt)
+            rec("反思包要求找出上次漏掉的", "漏掉" in txt)
+            rec("反思包带材料原文", "材料原文" in txt)
+            rec("反思包不是直接给建议",
+                "重新思考" in txt or "不要复述" in txt)
+
+        # compare：同目录对比自己，应该 0 变化
+        r = run([md, "compare", bdir, "--baseline", bdir, "--out", str(TMP / "m2")])
+        rec("compare 模式能跑通", r.returncode == 0)
+        cmp = TMP / "m2" / "版本对比.md"
+        rec("compare 产出对比表", cmp.is_file())
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
