@@ -370,6 +370,47 @@ def main() -> int:
         txt = lb.read_text(encoding="utf-8")
         rec("排行榜标出未评分的原因", "未评分" in txt and "不是合法 JSON" in txt)
 
+    # ---------- 10c. 独立验证发现的缺陷（回归守卫）----------
+    print("\n[10c] 独立验证查出的缺陷")
+
+    # ① 示例卡必须声明 filename_prefixes，否则 batch 无法从文件名识别奖项
+    try:
+        _r = json.loads(RUB.read_text(encoding="utf-8"))
+        no_prefix = [a for a, s in _r["awards"].items() if not (s.get("filename_prefixes"))]
+        rec("评分卡每个奖项都有 filename_prefixes", not no_prefix,
+            "缺 %s" % no_prefix if no_prefix else "")
+    except Exception as e:
+        rec("评分卡每个奖项都有 filename_prefixes", False, str(e)[:40])
+
+    # ② verify_outputs 在"没有材料"时也必须给 missing_total（否则调用方会当成"缺 0 项"）
+    empty = TMP / "novoid"; empty.mkdir(exist_ok=True)
+    r = run([ROOT / "scripts" / "verify_outputs.py", empty])
+    ok_shape = False
+    if r.stdout.strip():
+        try:
+            j = json.loads(r.stdout)
+            ok_shape = j.get("ok") is False and isinstance(j.get("missing_total"), int) \
+                and j["missing_total"] >= 1 and isinstance(j.get("missing"), list)
+        except Exception:
+            pass
+    rec("空目录核验返回 missing_total", ok_shape, "退出码 %d" % r.returncode)
+
+    # ③ 一份都没评分时必须非零退出（不能"看起来成功"）
+    none_dir = TMP / "noscore"; none_dir.mkdir(exist_ok=True)
+    import shutil as _sh2
+    _sh2.copy(docx_path, none_dir / docx_path.name)   # 只有材料，没有 judgments
+    r = run([ROOT / "scripts" / "batch.py", none_dir, "--out", none_dir, "--rubric", RUB])
+    rec("零评分时非零退出", r.returncode != 0, "退出码 %d" % r.returncode)
+    rec("零评分时说明原因", "没有任何材料完成评分" in (r.stderr or ""))
+
+    # ④ judgments 放在材料目录也要能用（不能只看输出目录）
+    sib = TMP / "sibling"; sib.mkdir(exist_ok=True)
+    _sh2.copy(docx_path, sib / docx_path.name)
+    _sh2.copy(jp, sib / jp.name)
+    r = run([ROOT / "scripts" / "batch.py", sib, "--out", sib, "--rubric", RUB])
+    rec("judgments 放材料目录也生效", r.returncode == 0 and "1 份有评分" in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[-1][:46])
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()

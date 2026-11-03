@@ -156,8 +156,12 @@ def main():
                             "--rubric", a.rubric, "--out", str(chk)], check=True, stdout=subprocess.DEVNULL)
         c = json.loads(chk.read_text(encoding="utf-8"))
         row = {"name": stem, "award": award, "checks": c["summary"]}
-        # judgments 可能就在源目录（from-json 场景），也可能在输出目录
-        jp = (f.parent / (stem + ".judgments.json")) if a.from_json else (out / (stem + ".judgments.json"))
+        # judgments 可能放输出目录，也可能跟材料放在一起——两处都找，避免"放了却没用上"
+        jp = out / (stem + ".judgments.json")
+        if not jp.is_file() and f.parent != out:
+            alt = f.parent / (stem + ".judgments.json")
+            if alt.is_file():
+                jp = alt
         if jp.exists() and not a.machine_only:
             # 单份 judgments 坏了不能拖垮整批：报出来、继续下一份
             r = subprocess.run([sys.executable, str(HERE / "score.py"), str(doc), "--checks", str(chk),
@@ -282,8 +286,7 @@ def main():
     else:
         strict = getattr(a, "strict", False)
         head = "严格模式失败：缺 %d 项" if strict else "提示：非严格模式，有 %d 项未生成"
-        print((head % vs.get("missing_total", 0)) + "（多为未装 LibreOffice 导致的 PDF）",
-              file=sys.stderr)
+        print(head % vs.get("missing_total", 0), file=sys.stderr)
         for m in vs.get("missing", [])[:5]:
             print("  - " + m, file=sys.stderr)
         if vs.get("missing_total", 0) > 5:
@@ -291,6 +294,15 @@ def main():
         if strict:
             return 2
     print("清单：%s" % manifest)
+    # 一份都没评分：这不是成功。要么奖项识别不了，要么 judgments 没对上。
+    if not scored:
+        print("错误：没有任何材料完成评分（共识别 %d 份）。\n"
+              "  常见原因：文件名没带奖项前缀、judgments 文件名与材料不匹配、或 --award 与评分卡不符。"
+              % len(rows), file=sys.stderr)
+        for r in rows[:5]:
+            if r.get("score_error"):
+                print("  - %s：%s" % (r["name"][:30], r["score_error"]), file=sys.stderr)
+        return 2
     return 0
 
 if __name__ == "__main__":

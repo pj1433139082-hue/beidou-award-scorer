@@ -40,8 +40,15 @@ def main() -> int:
     # 以 score.json 为该目录"有材料"的依据
     stems = sorted(p.name[:-len(".score.json")] for p in out.glob("*.score.json"))
     if not stems:
-        print(json.dumps({"ok": False, "reason": "目录里没有 *.score.json，没有可核验的材料"},
-                         ensure_ascii=False))
+        # 注意：missing / missing_total 必须始终存在——调用方靠它们判断，
+        # 早期版本这里只给 reason，batch 兜底成 0，于是把"什么都没产出"报成"缺 0 项"。
+        print(json.dumps({
+            "ok": False, "materials": 0,
+            "reason": "目录里没有 *.score.json，没有可核验的材料",
+            "missing": ["目录里没有任何 *.score.json（0 份材料完成评分）"],
+            "missing_total": 1,
+            "counts": {p.suffix: 1 for p in out.iterdir() if p.is_file()},
+        }, ensure_ascii=False, indent=1))
         return 2
 
     missing: list[str] = []
@@ -89,11 +96,18 @@ def main() -> int:
         except Exception as e:
             missing.append("manifest.json 无法解析：%s" % e)
 
-    counts = {}
+    # 按"产物类型"统计，而不是按后缀（.json 会把 doc/checks/score/judgments 混在一起）
+    KEY = {".doc.json": "doc", ".checks.json": "checks", ".score.json": "score",
+           ".report.md": "report", ".docx": "docx", ".pdf": "pdf",
+           ".judgments.json": "judgments"}
+    counts: dict[str, int] = {}
     for p in out.iterdir():
-        if p.is_file():
-            suf = p.suffix
-            counts[suf] = counts.get(suf, 0) + 1
+        if not p.is_file():
+            continue
+        kind = next((v for k, v in KEY.items() if p.name.endswith(k)), None)
+        if kind is None:
+            kind = {"xlsx": "xlsx", "md": "md", "json": "json"}.get(p.suffix[1:], "other")
+        counts[kind] = counts.get(kind, 0) + 1
 
     ok = not missing
     print(json.dumps({
