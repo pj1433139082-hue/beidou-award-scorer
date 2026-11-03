@@ -1,370 +1,379 @@
 {
-  "schema": "award-rubric/1.0",
-  "edition": "Generic example rubric — replace with your award's official criteria",
-  "source": {
-    "note": "示意用评分卡。结构照抄真实评分卡，分值与维度说明为通用示例，不对应任何具体赛事。",
-    "verified_on": "2026-11-02"
+ "schema": "award-rubric/1.0",
+ "edition": "Generic example rubric — replace with your award's official criteria",
+ "source": {
+  "note": "示意用评分卡。结构照抄真实评分卡，分值与维度说明为通用示例，不对应任何具体赛事。",
+  "verified_on": "2026-11-02"
+ },
+ "scoring_rules": {
+  "weights": {
+   "on_site": 0.75,
+   "ai": 0.25,
+   "note": "现场评审 75% + 书面/AI 评审 25%；不设现场答辩的奖项只用后一项"
   },
-  "scoring_rules": {
-    "weights": {
-      "on_site": 0.75,
-      "ai": 0.25,
-      "note": "现场评审 75% + 书面/AI 评审 25%；不设现场答辩的奖项只用后一项"
-    },
-    "aggregation": "多位评委打分时去掉最高分和最低分，取有效平均分",
-    "conflict": "书面评审与现场评审差异 > 10% 时提交综合审议，以审议结果为准",
-    "tie": "同分项目由评委综合审议再次评审",
-    "avoidance": "评委不对所属单位或本人参与的项目评分",
-    "ai_not_bonus": "技术路线（AI / 数字化 / 传统工程）只做分类统计，不作赋分依据",
-    "unscored_sentinel": {
-      "value": -1,
-      "meaning": "该维度未能评分（材料不可读 / 抽取失败 / 评审员未给出判断）",
-      "rule": "汇总时排除出加权分母，绝不计 0 分；报告中单列『未评分』并标注原因。"
-    }
-  },
-  "evidence_grades": {
-    "A": {
-      "name": "可复算",
-      "desc": "系统截图 + 运行日志/台账 + 独立验证记录，数字可被第三方按同一口径重算",
-      "band": [
-        0.75,
-        1
-      ],
-      "cap": 1
-    },
-    "B": {
-      "name": "部分佐证",
-      "desc": "有佐证材料但口径未闭合，或缺部分时段/部分项目的数据",
-      "band": [
-        0.5,
-        0.75
-      ],
-      "cap": 0.75
-    },
-    "C": {
-      "name": "自述",
-      "desc": "仅有文字描述、汇报材料结论、自评表格，无原始记录",
-      "band": [
-        0.2,
-        0.5
-      ],
-      "cap": 0.5
-    },
-    "D": {
-      "name": "无佐证",
-      "desc": "只有目标/规划表述，或声称的数据找不到出处",
-      "band": [
-        0,
-        0.2
-      ],
-      "cap": 0.2
-    }
-  },
-  "evidence_grades_meta": {
-    "band_semantics": "左闭右开 [lo, hi)，相邻档不重叠；同一分值只能落进唯一一档。",
-    "rule": "分数必须 <= 该维度满分 × 该档 cap；越界由 score.py 强制收缩到 cap。",
-    "validated_by": "scripts/score.py: validate_rubric_bands() 启动自检，区间重叠即报错退出。"
-  },
-  "gates": [
-    {
-      "id": "G1",
-      "name": "数据真实性",
-      "rule": "需提供后台截图与台账；发现造假迹象即该项计 0 并标记淘汰",
-      "effect": "veto"
-    },
-    {
-      "id": "G2",
-      "name": "已实现/在研分离",
-      "rule": "效益必须区分实际值与远期目标；混写或未标注的量化效益按在研计，最高只能取 C 档",
-      "effect": "cap_C"
-    },
-    {
-      "id": "G3",
-      "name": "运行时长",
-      "rule": "模型类成果需完成线上部署并在现场验证足够时长",
-      "effect": "cap_B"
-    },
-    {
-      "id": "G4",
-      "name": "效益可核验",
-      "rule": "无基线的变化率视为无效；无佐证的年化经济效益不得计入满分档",
-      "effect": "cap_B"
-    }
-  ],
-  "deductions": [
-    {
-      "id": "D1",
-      "points": 3,
-      "rule": "同一节约额在不同表格重复计入"
-    },
-    {
-      "id": "D2",
-      "points": 2,
-      "rule": "正文声称的数字与表格/附件测算结果不一致（差额 >5%）"
-    },
-    {
-      "id": "D3",
-      "points": 2,
-      "rule": "变化率没有基线或对比周期不明"
-    },
-    {
-      "id": "D4",
-      "points": 2,
-      "rule": "截图/图片无说明、不可读或与论点无关"
-    },
-    {
-      "id": "D5",
-      "points": 2,
-      "rule": "关键承诺只有「预计/有望」而无测算过程"
-    }
-  ],
-  "common_tables": {
-    "note": "机检按表头特征识别共用结构化表格，不依赖表序号",
-    "baseline_effect": {
-      "header_contains": [
-        "效益维度",
-        "基准值"
-      ],
-      "cols": [
-        "效益维度",
-        "计量口径/单位",
-        "基准值",
-        "实际值",
-        "佐证材料",
-        "远期目标"
-      ]
-    },
-    "accounting": {
-      "header_contains": [
-        "核算字段"
-      ],
-      "purpose": "ROI 计算（投入 / 月度成本 / 直接收益 / 已运行月份）"
-    },
-    "verify_items": {
-      "header_contains": [
-        "核验项"
-      ],
-      "purpose": "运行记录、数据真实性佐证、效益可核验性"
-    },
-    "basic_fields": {
-      "header_contains": [
-        "基础字段"
-      ],
-      "purpose": "成果名称、技术属性（仅分类）"
-    }
-  },
-  "awards": {
-    "示例奖A": {
-      "track": "示例赛道",
-      "full_name": "示例奖A",
-      "min_chars": 2500,
-      "thesis": "小发明小改造，针对现场问题提供解决方案",
-      "dimensions": [
-        {
-          "id": "value",
-          "name": "价值性",
-          "max": 35,
-          "official": "对生产运行能力提升或业务拓展有贡献；已创造经济效益或能提升综合效益。",
-          "anchors": {
-            "full": "已创造可复算的经济效益（有基线、有实际值、有台账），且对运行能力有明确提升",
-            "mid": "有可量化的效率/成本改善但口径未闭合",
-            "low": "只有定性描述，无数字"
-          },
-          "evidence": [
-            "效益维度表含实际值且非空",
-            "有台账/系统截图佐证",
-            "有改造前基线值与对比周期"
-          ]
-        },
-        {
-          "id": "replication",
-          "name": "推广性",
-          "max": 35,
-          "official": "解决共性问题，实施计划清晰、便于验证，后续可推广应用范围广。",
-          "anchors": {
-            "full": "已落地并有明确推广路径/已推广到多点，计划含时间与责任",
-            "mid": "有推广计划但未验证，或仅单点应用",
-            "low": "无推广计划"
-          },
-          "evidence": [
-            "推广计划（时间表/责任方/目标点数）",
-            "已推广点清单"
-          ]
-        },
-        {
-          "id": "novelty",
-          "name": "创新性",
-          "max": 30,
-          "official": "首次运用新模式/技术，或进行系统性集成，明显优于原有办法。",
-          "anchors": {
-            "full": "首创或首次系统集成，有对比证明明显优于原办法",
-            "mid": "在既有方法上有改进，但未给出优于原办法的证据",
-            "low": "常规改造"
-          },
-          "evidence": [
-            "与原办法的对比数据",
-            "首创声明或查新依据"
-          ]
-        }
-      ],
-      "profile": {
-        "generic_tables": true,
-        "promotion": false,
-        "model_lab": false,
-        "product": false,
-        "strategy": false,
-        "template_sections": false,
-        "roi": false
-      }
-    },
-    "示例奖B": {
-      "track": "示例赛道（含智能化维度）",
-      "full_name": "示例奖B",
-      "min_chars": 3000,
-      "thesis": "以模型/算法为核心驱动力的落地类成果",
-      "dimensions": [
-        {
-          "id": "value",
-          "name": "价值性",
-          "max": 25,
-          "official": "在提质、降本、增效方面产生可验证的实际收益。",
-          "anchors": {
-            "full": "有可验证的实际收益（实验室+现场双证据）",
-            "mid": "有收益但仅实验室口径",
-            "low": "只有预期收益"
-          },
-          "evidence": [
-            "评估结果",
-            "现场运行数据",
-            "效益核算口径"
-          ]
-        },
-        {
-          "id": "replication",
-          "name": "推广性",
-          "max": 25,
-          "official": "具备良好的跨场景、跨站点部署能力，可实现规模化复制。",
-          "anchors": {
-            "full": "已跨站点部署≥2 处并给出迁移成本与复用率",
-            "mid": "单点部署，给出迁移方案",
-            "low": "未考虑复制"
-          },
-          "evidence": [
-            "跨站点验证报告",
-            "迁移配置时长",
-            "参数复用率"
-          ]
-        },
-        {
-          "id": "novelty",
-          "name": "创新性",
-          "max": 30,
-          "official": "在算法设计、部署架构或业务场景深度上有明显突破。",
-          "anchors": {
-            "full": "算法/架构有突破并有对标证据",
-            "mid": "在传统做法上做增强",
-            "low": "规则引擎包装"
-          },
-          "evidence": [
-            "与传统做法的对比",
-            "算法说明",
-            "对标案例"
-          ]
-        },
-        {
-          "id": "intelligence",
-          "name": "智能化水平",
-          "max": 20,
-          "official": "评估是否完成线上部署、是否在现场实现全流程调用，以及运行验证的完整性与效果。",
-          "anchors": {
-            "full": "部署 + 现场全流程调用 + 足够时长运行验证三者齐全",
-            "mid": "部署+调用齐备但运行时长不足",
-            "low": "仅离线验证"
-          },
-          "evidence": [
-            "部署记录",
-            "调用记录",
-            "运行时长证明"
-          ]
-        }
-      ],
-      "profile": {
-        "generic_tables": true,
-        "promotion": false,
-        "model_lab": true,
-        "product": false,
-        "strategy": false,
-        "template_sections": false,
-        "roi": true
-      }
-    },
-    "示例奖C（推广类）": {
-      "track": "示例赛道（成果推广）",
-      "full_name": "示例奖C",
-      "min_chars": 1500,
-      "no_onsite": true,
-      "thesis": "以推广数量与质量为评价主轴的成果推广类奖项",
-      "profile": {
-        "generic_tables": false,
-        "promotion": true,
-        "model_lab": false,
-        "product": true,
-        "strategy": false,
-        "template_sections": false,
-        "roi": false
-      },
-      "dimensions": [
-        {
-          "id": "promotion",
-          "name": "推广力度",
-          "max": 40,
-          "official": "评估推广点数量（基础 1-5 / 适度 6-10 / 深度 10 以上）及覆盖范围。需提供推广案例佐证。",
-          "anchors": {
-            "full": "≥10 个且覆盖多个区域，案例佐证齐全",
-            "mid": "6-10 个或同区域多点",
-            "low": "1-5 个且单点"
-          },
-          "evidence": [
-            "推广点清单",
-            "每个案例的佐证"
-          ]
-        },
-        {
-          "id": "economics",
-          "name": "经济效益",
-          "max": 40,
-          "official": "通过增加销售、降低成本、提高效率创造的经济价值，需测算过程与证明材料。",
-          "anchors": {
-            "full": "有公式级测算过程 + 证明材料",
-            "mid": "有测算结果但过程不完整",
-            "low": "只给总数"
-          },
-          "evidence": [
-            "测算步骤表",
-            "证明材料"
-          ]
-        },
-        {
-          "id": "readiness",
-          "name": "产品就绪度",
-          "max": 20,
-          "official": "成果从方案到产品的转化程度：已产品化 / 有原型 / 仍在方案阶段。",
-          "anchors": {
-            "full": "已实现产品转化",
-            "mid": "形成原型且持续优化",
-            "low": "未产品化"
-          },
-          "evidence": [
-            "交付形态",
-            "合同或订单"
-          ]
-        }
-      ],
-      "gate_dimension": {
-        "id": "iteration",
-        "name": "成果迭代性",
-        "rule": "相较上次参赛版本有明显迭代；不满足即为否决项"
-      }
-    }
+  "aggregation": "多位评委打分时去掉最高分和最低分，取有效平均分",
+  "conflict": "书面评审与现场评审差异 > 10% 时提交综合审议，以审议结果为准",
+  "tie": "同分项目由评委综合审议再次评审",
+  "avoidance": "评委不对所属单位或本人参与的项目评分",
+  "ai_not_bonus": "技术路线（AI / 数字化 / 传统工程）只做分类统计，不作赋分依据",
+  "unscored_sentinel": {
+   "value": -1,
+   "meaning": "该维度未能评分（材料不可读 / 抽取失败 / 评审员未给出判断）",
+   "rule": "汇总时排除出加权分母，绝不计 0 分；报告中单列『未评分』并标注原因。"
   }
+ },
+ "evidence_grades": {
+  "A": {
+   "name": "可复算",
+   "desc": "系统截图 + 运行日志/台账 + 独立验证记录，数字可被第三方按同一口径重算",
+   "band": [
+    0.75,
+    1
+   ],
+   "cap": 1
+  },
+  "B": {
+   "name": "部分佐证",
+   "desc": "有佐证材料但口径未闭合，或缺部分时段/部分项目的数据",
+   "band": [
+    0.5,
+    0.75
+   ],
+   "cap": 0.75
+  },
+  "C": {
+   "name": "自述",
+   "desc": "仅有文字描述、汇报材料结论、自评表格，无原始记录",
+   "band": [
+    0.2,
+    0.5
+   ],
+   "cap": 0.5
+  },
+  "D": {
+   "name": "无佐证",
+   "desc": "只有目标/规划表述，或声称的数据找不到出处",
+   "band": [
+    0,
+    0.2
+   ],
+   "cap": 0.2
+  }
+ },
+ "evidence_grades_meta": {
+  "band_semantics": "左闭右开 [lo, hi)，相邻档不重叠；同一分值只能落进唯一一档。",
+  "rule": "分数必须 <= 该维度满分 × 该档 cap；越界由 score.py 强制收缩到 cap。",
+  "validated_by": "scripts/score.py: validate_rubric_bands() 启动自检，区间重叠即报错退出。"
+ },
+ "gates": [
+  {
+   "id": "G1",
+   "name": "数据真实性",
+   "rule": "需提供后台截图与台账；发现造假迹象即该项计 0 并标记淘汰",
+   "effect": "veto"
+  },
+  {
+   "id": "G2",
+   "name": "已实现/在研分离",
+   "rule": "效益必须区分实际值与远期目标；混写或未标注的量化效益按在研计，最高只能取 C 档",
+   "effect": "cap_C"
+  },
+  {
+   "id": "G3",
+   "name": "运行时长",
+   "rule": "模型类成果需完成线上部署并在现场验证足够时长",
+   "effect": "cap_B"
+  },
+  {
+   "id": "G4",
+   "name": "效益可核验",
+   "rule": "无基线的变化率视为无效；无佐证的年化经济效益不得计入满分档",
+   "effect": "cap_B"
+  }
+ ],
+ "deductions": [
+  {
+   "id": "D1",
+   "points": 3,
+   "rule": "同一节约额在不同表格重复计入"
+  },
+  {
+   "id": "D2",
+   "points": 2,
+   "rule": "正文声称的数字与表格/附件测算结果不一致（差额 >5%）"
+  },
+  {
+   "id": "D3",
+   "points": 2,
+   "rule": "变化率没有基线或对比周期不明"
+  },
+  {
+   "id": "D4",
+   "points": 2,
+   "rule": "截图/图片无说明、不可读或与论点无关"
+  },
+  {
+   "id": "D5",
+   "points": 2,
+   "rule": "关键承诺只有「预计/有望」而无测算过程"
+  }
+ ],
+ "common_tables": {
+  "note": "机检按表头特征识别共用结构化表格，不依赖表序号",
+  "baseline_effect": {
+   "header_contains": [
+    "效益维度",
+    "基准值"
+   ],
+   "cols": [
+    "效益维度",
+    "计量口径/单位",
+    "基准值",
+    "实际值",
+    "佐证材料",
+    "远期目标"
+   ]
+  },
+  "accounting": {
+   "header_contains": [
+    "核算字段"
+   ],
+   "purpose": "ROI 计算（投入 / 月度成本 / 直接收益 / 已运行月份）"
+  },
+  "verify_items": {
+   "header_contains": [
+    "核验项"
+   ],
+   "purpose": "运行记录、数据真实性佐证、效益可核验性"
+  },
+  "basic_fields": {
+   "header_contains": [
+    "基础字段"
+   ],
+   "purpose": "成果名称、技术属性（仅分类）"
+  }
+ },
+ "awards": {
+  "示例奖A": {
+   "track": "示例赛道",
+   "full_name": "示例奖A",
+   "min_chars": 2500,
+   "thesis": "小发明小改造，针对现场问题提供解决方案",
+   "dimensions": [
+    {
+     "id": "value",
+     "name": "价值性",
+     "max": 35,
+     "official": "对生产运行能力提升或业务拓展有贡献；已创造经济效益或能提升综合效益。",
+     "anchors": {
+      "full": "已创造可复算的经济效益（有基线、有实际值、有台账），且对运行能力有明确提升",
+      "mid": "有可量化的效率/成本改善但口径未闭合",
+      "low": "只有定性描述，无数字"
+     },
+     "evidence": [
+      "效益维度表含实际值且非空",
+      "有台账/系统截图佐证",
+      "有改造前基线值与对比周期"
+     ]
+    },
+    {
+     "id": "replication",
+     "name": "推广性",
+     "max": 35,
+     "official": "解决共性问题，实施计划清晰、便于验证，后续可推广应用范围广。",
+     "anchors": {
+      "full": "已落地并有明确推广路径/已推广到多点，计划含时间与责任",
+      "mid": "有推广计划但未验证，或仅单点应用",
+      "low": "无推广计划"
+     },
+     "evidence": [
+      "推广计划（时间表/责任方/目标点数）",
+      "已推广点清单"
+     ]
+    },
+    {
+     "id": "novelty",
+     "name": "创新性",
+     "max": 30,
+     "official": "首次运用新模式/技术，或进行系统性集成，明显优于原有办法。",
+     "anchors": {
+      "full": "首创或首次系统集成，有对比证明明显优于原办法",
+      "mid": "在既有方法上有改进，但未给出优于原办法的证据",
+      "low": "常规改造"
+     },
+     "evidence": [
+      "与原办法的对比数据",
+      "首创声明或查新依据"
+     ]
+    }
+   ],
+   "profile": {
+    "generic_tables": true,
+    "promotion": false,
+    "model_lab": false,
+    "product": false,
+    "strategy": false,
+    "template_sections": false,
+    "roi": false
+   },
+   "filename_prefixes": [
+    "示例奖A"
+   ]
+  },
+  "示例奖B": {
+   "track": "示例赛道（含智能化维度）",
+   "full_name": "示例奖B",
+   "min_chars": 3000,
+   "thesis": "以模型/算法为核心驱动力的落地类成果",
+   "dimensions": [
+    {
+     "id": "value",
+     "name": "价值性",
+     "max": 25,
+     "official": "在提质、降本、增效方面产生可验证的实际收益。",
+     "anchors": {
+      "full": "有可验证的实际收益（实验室+现场双证据）",
+      "mid": "有收益但仅实验室口径",
+      "low": "只有预期收益"
+     },
+     "evidence": [
+      "评估结果",
+      "现场运行数据",
+      "效益核算口径"
+     ]
+    },
+    {
+     "id": "replication",
+     "name": "推广性",
+     "max": 25,
+     "official": "具备良好的跨场景、跨站点部署能力，可实现规模化复制。",
+     "anchors": {
+      "full": "已跨站点部署≥2 处并给出迁移成本与复用率",
+      "mid": "单点部署，给出迁移方案",
+      "low": "未考虑复制"
+     },
+     "evidence": [
+      "跨站点验证报告",
+      "迁移配置时长",
+      "参数复用率"
+     ]
+    },
+    {
+     "id": "novelty",
+     "name": "创新性",
+     "max": 30,
+     "official": "在算法设计、部署架构或业务场景深度上有明显突破。",
+     "anchors": {
+      "full": "算法/架构有突破并有对标证据",
+      "mid": "在传统做法上做增强",
+      "low": "规则引擎包装"
+     },
+     "evidence": [
+      "与传统做法的对比",
+      "算法说明",
+      "对标案例"
+     ]
+    },
+    {
+     "id": "intelligence",
+     "name": "智能化水平",
+     "max": 20,
+     "official": "评估是否完成线上部署、是否在现场实现全流程调用，以及运行验证的完整性与效果。",
+     "anchors": {
+      "full": "部署 + 现场全流程调用 + 足够时长运行验证三者齐全",
+      "mid": "部署+调用齐备但运行时长不足",
+      "low": "仅离线验证"
+     },
+     "evidence": [
+      "部署记录",
+      "调用记录",
+      "运行时长证明"
+     ]
+    }
+   ],
+   "profile": {
+    "generic_tables": true,
+    "promotion": false,
+    "model_lab": true,
+    "product": false,
+    "strategy": false,
+    "template_sections": false,
+    "roi": true
+   },
+   "filename_prefixes": [
+    "示例奖B"
+   ]
+  },
+  "示例奖C（推广类）": {
+   "track": "示例赛道（成果推广）",
+   "full_name": "示例奖C",
+   "min_chars": 1500,
+   "no_onsite": true,
+   "thesis": "以推广数量与质量为评价主轴的成果推广类奖项",
+   "profile": {
+    "generic_tables": false,
+    "promotion": true,
+    "model_lab": false,
+    "product": true,
+    "strategy": false,
+    "template_sections": false,
+    "roi": false
+   },
+   "dimensions": [
+    {
+     "id": "promotion",
+     "name": "推广力度",
+     "max": 40,
+     "official": "评估推广点数量（基础 1-5 / 适度 6-10 / 深度 10 以上）及覆盖范围。需提供推广案例佐证。",
+     "anchors": {
+      "full": "≥10 个且覆盖多个区域，案例佐证齐全",
+      "mid": "6-10 个或同区域多点",
+      "low": "1-5 个且单点"
+     },
+     "evidence": [
+      "推广点清单",
+      "每个案例的佐证"
+     ]
+    },
+    {
+     "id": "economics",
+     "name": "经济效益",
+     "max": 40,
+     "official": "通过增加销售、降低成本、提高效率创造的经济价值，需测算过程与证明材料。",
+     "anchors": {
+      "full": "有公式级测算过程 + 证明材料",
+      "mid": "有测算结果但过程不完整",
+      "low": "只给总数"
+     },
+     "evidence": [
+      "测算步骤表",
+      "证明材料"
+     ]
+    },
+    {
+     "id": "readiness",
+     "name": "产品就绪度",
+     "max": 20,
+     "official": "成果从方案到产品的转化程度：已产品化 / 有原型 / 仍在方案阶段。",
+     "anchors": {
+      "full": "已实现产品转化",
+      "mid": "形成原型且持续优化",
+      "low": "未产品化"
+     },
+     "evidence": [
+      "交付形态",
+      "合同或订单"
+     ]
+    }
+   ],
+   "gate_dimension": {
+    "id": "iteration",
+    "name": "成果迭代性",
+    "rule": "相较上次参赛版本有明显迭代；不满足即为否决项"
+   },
+   "filename_prefixes": [
+    "示例奖C（推广类）"
+   ]
+  }
+ }
 }
