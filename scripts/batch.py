@@ -13,6 +13,10 @@ from __future__ import annotations
 import argparse, json, subprocess, sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from material_role import is_reference, declared_track, track_matches  # noqa: E402
+
+
 class RubricError(Exception):
     """评分卡不可用。"""
 
@@ -156,13 +160,30 @@ def main():
                             "--rubric", a.rubric, "--out", str(chk)], check=True, stdout=subprocess.DEVNULL)
         c = json.loads(chk.read_text(encoding="utf-8"))
         row = {"name": stem, "award": award, "checks": c["summary"]}
+
+        # 参考材料（过往版本等）不是参赛项目：不算分、不排名
+        row["role"] = "reference" if is_reference(stem) else "submission"
+
+        # 正文声明的赛道与文件名奖项是否一致——改赛道后忘了改名会用错评分维度
+        try:
+            _doc = json.loads(doc.read_text(encoding="utf-8"))
+            _track = declared_track(_doc.get("plain", ""))
+        except Exception:
+            _track = None
+        row["track"] = _track
+        if track_matches(award, _track) is False:
+            row["track_mismatch"] = True
+            print("[注意] %s：文件名判为「%s」，但正文声明「%s」"
+                  % (stem[:36], award, _track), file=sys.stderr)
         # judgments 可能放输出目录，也可能跟材料放在一起——两处都找，避免"放了却没用上"
         jp = out / (stem + ".judgments.json")
         if not jp.is_file() and f.parent != out:
             alt = f.parent / (stem + ".judgments.json")
             if alt.is_file():
                 jp = alt
-        if jp.exists() and not a.machine_only:
+        if row["role"] == "reference":
+            row["note"] = "参考材料（过往版本），不参与排名"
+        elif jp.exists() and not a.machine_only:
             # 单份 judgments 坏了不能拖垮整批：报出来、继续下一份
             r = subprocess.run([sys.executable, str(HERE / "score.py"), str(doc), "--checks", str(chk),
                                 "--judgments", str(jp), "--award", award, "--rubric", a.rubric,
@@ -181,7 +202,9 @@ def main():
             row["note"] = "未提供 judgments，仅机检"
         rows.append(row)
     # 排行榜
-    scored = [r for r in rows if "ai_score" in r]
+    submissions = [r for r in rows if r.get("role") != "reference"]
+    references = [r for r in rows if r.get("role") == "reference"]
+    scored = [r for r in submissions if "ai_score" in r]
     lines = ["# 北斗奖申报材料批量评分表", "",
              "| 排名 | 材料 | 奖项 | AI 评审分 | 奖项区间 | 置信度 | 机检 pass/warn/fail |",
              "|---|---|---|---|---|---|---|"]
@@ -191,14 +214,21 @@ def main():
         lines.append("| %d | %s | %s | **%s** | %s | %s | %d/%d/%d |" % (
             i, r["name"][:40], r["award"], r["ai_score"], r["band"], r["confidence"],
             s["pass"], s["warn"], s["fail"]))
-    others = [r for r in rows if "ai_score" not in r]
+    others = [r for r in submissions if "ai_score" not in r]
     if others:
         lines += ["", "## 未评分", "", "| 材料 | 奖项 | 原因 |", "|---|---|---|"]
         for r in others:
             why = r.get("score_error") or r.get("note") or "未提供 judgments"
             lines.append("| %s | %s | %s |" % (r["name"][:40], r["award"], why))
+    if references:
+        lines += ["", "## 参考材料（不计入排名）", "",
+                  "| 材料 | 名义奖项 | 正文声明赛道 |", "|---|---|---|"]
+        for r in references:
+            lines.append("| %s | %s | %s |" % (
+                r["name"][:40], r["award"], r.get("track") or "—"))
     (out / "leaderboard.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print("写出 %s（%d 份材料，%d 份有评分）" % (out / "leaderboard.md", len(rows), len(scored)))
+    print("写出 %s（%d 份参赛项目，%d 份有评分；另有 %d 份参考材料）"
+          % (out / "leaderboard.md", len(submissions), len(scored), len(references)))
 
     # 有评分才导 Excel（没评分时导出没有意义）
     if scored:
@@ -250,16 +280,31 @@ def main():
         suf = Path(it["name"]).suffix
         counts[suf] = counts.get(suf, 0) + 1
     manifest.write_text(json.dumps({
-        "materials": len(scored), "rows": len(rows),
+        "materials": len(scored),
+        "submissions": len(submissions),
+        "references": len(references),
+        "rows": len(rows),
         "counts": counts, "files": files,
     }, ensure_ascii=False, indent=1), encoding="utf-8")
 
     # 缺 judgments 的材料：严格模式下算失败
+    mismatch = [r for r in rows if r.get("track_mismatch")]
+    if mismatch:
+        msg = "有 %d 份材料的文件名奖项与正文赛道不一致" % len(mismatch)
+        if getattr(a, "strict", False):
+            print("严格模式失败：" + msg, file=sys.stderr)
+            for r in mismatch[:3]:
+                print("  - %s：文件名为「%s」，正文为「%s」"
+                      % (r["name"][:30], r["award"], r.get("track")), file=sys.stderr)
+            return 2
+        print("提示：" + msg)
     scored_fail = [r for r in rows if r.get("score_error")]
     if scored_fail and getattr(a, "strict", False):
         print("严格模式失败：%d 份材料打分失败" % len(scored_fail), file=sys.stderr)
         return 2
-    no_judg = [r["name"] for r in rows if "ai_score" not in r and not r.get("score_error")]
+    no_judg = [r["name"] for r in rows
+               if r.get("role") != "reference"
+               and "ai_score" not in r and not r.get("score_error")]
     if no_judg:
         msg = "有 %d 份材料缺 judgments，只出了机检：%s" % (
             len(no_judg), "、".join(n[:20] for n in no_judg[:3]))
@@ -295,8 +340,8 @@ def main():
             return 2
     print("清单：%s" % manifest)
     # 一份都没评分：这不是成功。要么奖项识别不了，要么 judgments 没对上。
-    if not scored:
-        print("错误：没有任何材料完成评分（共识别 %d 份）。\n"
+    if not scored and submissions:
+        print("错误：没有任何材料完成评分（共识别 %d 份参赛项目）。\n"
               "  常见原因：文件名没带奖项前缀、judgments 文件名与材料不匹配、或 --award 与评分卡不符。"
               % len(rows), file=sys.stderr)
         for r in rows[:5]:

@@ -89,10 +89,11 @@ def main() -> int:
                 if not (out / item["name"]).is_file():
                     missing.append("manifest 记录但已丢失：" + item["name"])
             # 本轮看过几份材料 vs 实际出了几分——差额就是打分失败的
-            rows = m.get("rows")
-            if isinstance(rows, int) and rows > len(stems):
-                missing.append("有 %d 份材料未产出 score.json（打分失败或格式错误）"
-                               % (rows - len(stems)))
+            # 只看参赛项目：参考材料（过往版本）本来就不该产 score.json
+            subs = m.get("submissions")
+            if isinstance(subs, int) and subs > len(stems):
+                missing.append("有 %d 份参赛项目未产出 score.json（打分失败或格式错误）"
+                               % (subs - len(stems)))
         except Exception as e:
             missing.append("manifest.json 无法解析：%s" % e)
 
