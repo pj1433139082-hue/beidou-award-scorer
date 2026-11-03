@@ -246,6 +246,24 @@ Whether the submission is eliminated is decided by the panel after follow-up que
 - **Confidence** drops to medium at ≥6 warn+fail checks or any dimension at grade C/D, and to low at ≥9.
 - **Dispute list** is written for the defense panel: it is the "contested points" feedback channel most review processes now ask for.
 
+## Extraction: no docx library, and how exact it is
+
+`extract_report.py` reads `word/document.xml` directly with `zipfile` + `ElementTree`.
+It does not import `python-docx`, which spends most of its time building a full DOM tree,
+parsing styles.xml / numbering.xml / theme, and wrapping every run in a Python object. All this
+tool needs is text, table cells, heading levels and image positions.
+
+Measured on the same twenty submissions: **14.2s with python-docx, 8.1s without.**
+
+The trade-off, stated plainly: the reconstructed `plain` text matches the old extractor
+byte-for-byte on 7 of 20 documents. The differences are cover-page tables and nested tables,
+where python-docx's cell-merge handling and a direct XML walk disagree by a space or a slash.
+**This does not change any conclusion**: the twenty machine checks agree on 19 of 20 documents
+(the one exception is C17 counting two images python-docx missed - the new extractor is the more
+accurate of the two), and quote verification is identical given the same judgments.
+
+If you ever need the old byte-exact behaviour: `git show 130f4ef:scripts/extract_report.py`.
+
 ## Limits of the checks (state these to the user)
 
 - Deterministic checks verify **form, not truth**: they can tell whether a number is present and consistent, never whether it is real.
