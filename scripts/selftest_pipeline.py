@@ -187,20 +187,26 @@ def main() -> int:
         ws = wb["汇总"]
         # 关键列必须存在
         hdr = {str(ws.cell(4, c).value).strip() for c in range(1, ws.max_column + 1)}
-        need = {"申报材料", "总分", "奖项区间", "修改建议"}
+        need = {"申报材料", "总分", "奖项区间"}
         # 「置信度」「需关注」已按要求去掉，不该再出现
         banned = {"置信度", "需关注"}
-        rec("Excel 三个工作表齐全", sheets == ["汇总", "维度明细", "争议点"], str(sheets))
+        rec("Excel 只有 汇总/修改建议 两张表", sheets == ["汇总", "修改建议"], str(sheets))
         rec("汇总表关键列存在", need <= hdr, "缺 %s" % (need - hdr) if not need <= hdr else "")
         rec("已去掉置信度/需关注列", not (banned & hdr), "仍有 %s" % (banned & hdr) if banned & hdr else "")
         # 总计行必须在汇总表里
         all_txt = " ".join(str(c.value) for row in ws.iter_rows() for c in row if c.value)
         rec("汇总表含总计行", "总计" in all_txt and "平均" in all_txt)
         # 建议列必须有内容（不能是空列）
-        adv_col = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(4, c).value).strip() == "修改建议")
-        filled = sum(1 for rw in range(5, ws.max_row + 1)
-                     if ws.cell(rw, adv_col).value and str(ws.cell(rw, adv_col).value).strip() not in ("", "—"))
-        rec("修改建议列有实际内容", filled >= 1, "%d 行有建议" % filled)
+        # 首要修改建议列的列名含"首要修改建议"，用包含匹配
+        adv_col = next((c for c in range(1, ws.max_column + 1)
+                        if "修改建议" in str(ws.cell(4, c).value or "")), None)
+        filled = 0
+        if adv_col:
+            filled = sum(1 for rw in range(5, ws.max_row + 1)
+                         if ws.cell(rw, adv_col).value
+                         and str(ws.cell(rw, adv_col).value).strip() not in ("", "—"))
+        rec("首要修改建议列有内容", bool(adv_col) and filled >= 1,
+            "%s 行有建议" % filled if adv_col else "未找到该列")
     else:
         rec("Excel 导出", False, r.stderr[-160:])
 
@@ -220,6 +226,41 @@ def main() -> int:
         # 建议不能是同一句重复（早期 bug：全局项挂到每个维度）
         adv_lines = [l for l in txt.splitlines() if l.startswith("- （") or "怎么改**：" in l]
         rec("意见不是机械重复", len(set(adv_lines)) >= min(2, len(adv_lines)) if adv_lines else True)
+
+    # ---------- 6b2. Excel 与 Word 的建议条目必须一一对应 ----------
+    print("\n[6b2] 建议条目对应性")
+    xl2 = TMP / "corr.xlsx"
+    r = run([ROOT / "scripts" / "export_xlsx.py", out, "--out", xl2])
+    wdir2 = TMP / "corrwd"
+    r2 = run([ROOT / "scripts" / "export_docx.py", out, "--out", wdir2])
+    ok = r.returncode == 0 and r2.returncode == 0 and xl2.is_file()
+    rec("两份导出都成功", ok)
+    if ok:
+        from openpyxl import load_workbook as _lw
+        from docx import Document as _Doc
+        import re as _re
+        wb2 = _lw(xl2)
+        rec("Excel 只有 汇总/修改建议 两张表", wb2.sheetnames == ["汇总", "修改建议"],
+            str(wb2.sheetnames))
+        ws2 = wb2["修改建议"]
+        xl_nos = [str(rr[0]) for rr in ws2.iter_rows(min_row=5, values_only=True)
+                  if rr[0] and _re.match(r"^[0-9]+-M[0-9][0-9]$", str(rr[0]))]
+        wd_nos, lack = [], 0
+        for f2 in wdir2.glob("*.docx"):
+            if "汇总" in f2.name:
+                continue
+            txt = "\n".join(p.text for p in _Doc(str(f2)).paragraphs)
+            for seg in ("原文是什么", "怎么改", "修改之后的句子"):
+                if seg not in txt:
+                    lack += 1
+            for p in _Doc(str(f2)).paragraphs:
+                m = _re.match(r"^([0-9]+-M[0-9][0-9])\u3000", p.text.strip())
+                if m:
+                    wd_nos.append(m.group(1))
+        rec("Word 与 Excel 条目数一致", len(wd_nos) == len(xl_nos) and len(xl_nos) > 0,
+            "Word %d / Excel %d" % (len(wd_nos), len(xl_nos)))
+        rec("Word 与 Excel 编号集合相同", sorted(wd_nos) == sorted(xl_nos))
+        rec("每条建议都是三段式", lack == 0, "缺 %d 处" % lack if lack else "")
 
     # ---------- 6c. Word 导出 ----------
     print("\n[6c] 逐项目意见导出 Word")
