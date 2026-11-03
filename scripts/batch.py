@@ -56,11 +56,20 @@ def main():
     ap.add_argument("--glob", default="*.docx,*.pdf")
     ap.add_argument("--from-json", action="store_true",
                     help="src 里已是抽好的 *.doc.json（不再抽原文），直接机检与打分")
+    ap.add_argument("--with-docx", action="store_true",
+                    help="同时导出 Word（每份一个 + 一本汇总）")
+    ap.add_argument("--with-pdf", action="store_true",
+                    help="再把 Word 转成 PDF（需要 LibreOffice，找不到则跳过）")
+    ap.add_argument("--all", action="store_true",
+                    help="等同 --with-docx --with-pdf，一条命令出全套交付物")
     ap.add_argument("--from-scores", action="store_true",
                     help="src 里已有 *.score.json，只重出排行榜与 Excel（不再机检打分）")
     ap.add_argument("--machine-only", action="store_true", help="只出机检，不打分")
     ap.add_argument("--rubric", default=str(DEFAULT_RUBRIC), help="评分卡路径，奖品名与别名从这里读")
     a = ap.parse_args()
+    if getattr(a, "all", False):
+        a.with_docx = True
+        a.with_pdf = True
     src, out = Path(a.src), Path(a.out)
     awards, aliases = load_awards(a.rubric)
     out.mkdir(parents=True, exist_ok=True)
@@ -169,6 +178,31 @@ def main():
             print("写出 %s" % xlsx)
         else:
             print("Excel 导出未完成（可稍后手动跑 scripts/export_xlsx.py）：" + r.stderr.strip()[-160:], file=sys.stderr)
+
+        # Word：每份一份 + 一本汇总册
+        if getattr(a, "with_docx", False):
+            r = subprocess.run([sys.executable, str(HERE / "export_docx.py"), str(out),
+                                "--out", str(out), "--merge"],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                n_docx = len(list(out.glob("*.docx")))
+                print("写出 %d 个 Word（含汇总册）" % n_docx)
+            else:
+                print("Word 导出未完成（可手动跑 scripts/export_docx.py）："
+                      + r.stderr.strip()[-160:], file=sys.stderr)
+
+        # PDF：可选，找不到 LibreOffice 就跳过
+        if getattr(a, "with_pdf", False):
+            r = subprocess.run([sys.executable, str(HERE / "export_pdf.py"), str(out),
+                                "--out", str(out)],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                if '"skipped": true' in r.stdout or '"skipped":true' in r.stdout:
+                    print("PDF 跳过（未找到 LibreOffice，Word 版可正常使用）")
+                else:
+                    print("写出 %d 个 PDF" % len(list(out.glob("*.pdf"))))
+            else:
+                print("PDF 转换未全部完成：" + r.stdout.strip()[-160:], file=sys.stderr)
     return 0
 
 if __name__ == "__main__":
