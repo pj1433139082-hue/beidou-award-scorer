@@ -780,6 +780,26 @@ def main() -> int:
                 '"已落实": 0' in (r.stdout or ""),
                 (r.stdout or "")[:80])
 
+    # ---------- 10l. 多轮一致性 ----------
+    print("\n[10l] 多轮一致性检验")
+    cs = ROOT / "scripts" / "consistency.py"
+    rec("consistency.py 存在", cs.is_file())
+    if cs.is_file():
+        # 同一个目录当两轮 -> 应该 0 跨度
+        r = run([cs, out, out, "--out", str(TMP / "cs")])
+        rec("一致性工具能跑通", r.returncode == 0, (r.stderr or "")[-100:])
+        rec("同结果对比跨度为 0", '"max_spread": 0' in (r.stdout or "")
+            or '"max_spread": 0.0' in (r.stdout or ""),
+            (r.stdout or "")[:100])
+        rep = TMP / "cs" / "一致性检验.md"
+        rec("产出一致性报告", rep.is_file())
+        if rep.is_file():
+            txt = rep.read_text(encoding="utf-8")
+            rec("报告含「怎么读」说明", "怎么读这份报告" in txt)
+        # 只有一轮应该报错
+        r = run([cs, out, "--out", str(TMP / "cs2")])
+        rec("单轮结果拒绝比对", r.returncode == 2)
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
