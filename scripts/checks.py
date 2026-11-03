@@ -208,7 +208,9 @@ def c08_duplicate_benefit(doc):
                 # 同一行里同一金额出现多次不算"多处出现"——
                 # 一个单元格写"0.3万元（含税、0.3万元以下）"是正常表述，
                 # 不是重复计入。只有跨行/跨表复现才算。
-                bucket = money.setdefault(round(v, 1), [])
+                # 用原值做键，不 round——"741.0万元"在原文里根本不存在（原文是 741.3 或类似），
+                # 四舍五入后的证据会让人以为机检读错了，反而降低可信度。
+                bucket = money.setdefault(v, [])
                 if loc not in bucket:
                     bucket.append(loc)
     dup = {k: v for k, v in money.items() if len(v) > 1}

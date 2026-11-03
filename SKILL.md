@@ -100,6 +100,21 @@ format checks carry no deduction, and the M-numbers in Excel and Word are the sa
 `batch.py` runs it automatically; you do not need to open a single file to know whether the layout
 is right.
 
+**And one layer no automated check can cover:**
+
+```bash
+python scripts/verify_checks.py out/ --sample 3
+```
+
+The three checks above verify code logic, file presence and layout. None of them verifies whether
+a machine finding is *correct*. That gap has a real cost: C08 once read `0.50万元` as 50.0 because
+its pattern was `\d{2,6}`, and `6.00万元` as 0.0. Nothing failed, nothing warned - the conclusion
+was simply wrong, and it stayed wrong until an independent reviewer went back to the source
+documents. `verify_checks.py` samples a few submissions and prints every fail/warn next to the
+passage it is based on, including a search of the original text, so a human can judge whether the
+finding holds. It flags 证据在原文找不到 when a finding's own evidence does not appear in the
+document - which is exactly how that C08 bug would have surfaced.
+
 For a pipeline where a missing file must stop the run:
 
 ```bash
