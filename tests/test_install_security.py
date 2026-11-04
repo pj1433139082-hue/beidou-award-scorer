@@ -62,7 +62,9 @@ def test_能解析_SHA256SUMS_格式(inst, monkeypatch):
             return False
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: FakeResp())
-    assert inst.fetch_expected_sha256("x/y", "main") == digest
+    # 必须传归档名：不知道要比对哪个包时不能猜（见 fetch_expected_sha256 注释）
+    assert inst.fetch_expected_sha256(
+        "x/y", "main", "beidou-award-scorer.zip") == digest
 
 
 def test_能解析只有哈希一行的格式(inst, monkeypatch):

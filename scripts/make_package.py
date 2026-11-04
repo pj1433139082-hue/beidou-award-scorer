@@ -211,6 +211,20 @@ def main() -> int:
         print(r.stdout.strip() or r.stderr.strip()[-400:])
         if r.returncode != 0:
             return r.returncode
+
+        # 发布成功后，为这个 tag 的归档算一份校验和写进 SHA256SUMS。
+        # 走 tag 而不是分支：tag 归档字节稳定，分支归档会因为「记录哈希这件事
+        # 本身改变仓库」而永远对不上（自指问题）。
+        # 生成后需要把 SHA256SUMS 再提交一次，供 install.py 读取。
+        sums = Path(__file__).resolve().parent / "sums.py"
+        if sums.is_file():
+            print("\n生成 %s 的校验和 …" % tag)
+            rr = subprocess.run([sys.executable, str(sums), "--tag", tag,
+                                 "--repo", a.repo],
+                                capture_output=True, text=True)
+            print(rr.stdout.strip() or rr.stderr.strip()[-300:])
+            if rr.returncode == 0:
+                print("  记得把 SHA256SUMS 提交上去：install.py 从这里读期望值")
     return 0
 
 

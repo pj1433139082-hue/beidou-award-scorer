@@ -63,7 +63,7 @@ def sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def fetch_expected_sha256(repo: str, branch: str) -> str | None:
+def fetch_expected_sha256(repo: str, branch: str, archive_name: str = "") -> str | None:
     """尝试取官方发布的 SHA256 清单。取不到就返回 None（不阻断安装）。
 
     为什么需要它：TLS 只保证「内容来自 github.com」，不保证「来自作者」。
@@ -78,12 +78,28 @@ def fetch_expected_sha256(repo: str, branch: str) -> str | None:
                 text = resp.read().decode("utf-8", "replace")
         except Exception:
             continue
+        entries = {}
         for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
             parts = line.split()
-            if len(parts) >= 2 and (parts[-1].endswith(".zip") or parts[-1] == "*"):
-                return parts[0].lower()
-            if len(parts) == 1 and len(parts[0]) == 64:
-                return parts[0].lower()
+            if len(parts) >= 2 and len(parts[0]) == 64:
+                entries[parts[-1].lstrip("*")] = parts[0].lower()
+            elif len(parts) == 1 and len(parts[0]) == 64:
+                entries[""] = parts[0].lower()
+        if not entries:
+            continue
+        # 只按归档文件名精确匹配。
+        # 不做「只有一条就返回它」的宽松回退——那会让「清单里没有这个包」
+        # 退化成「用别的包的哈希来比对」，要么误报失败，要么在校验本身被
+        # 削弱时误报成功。取不到就返回 None，让调用方明确提示未校验。
+        if archive_name and archive_name in entries:
+            return entries[archive_name]
+        # 清单里只有裸哈希（没有文件名）时，视为对「唯一这个包」的校验
+        if "" in entries and len(entries) == 1:
+            return entries[""]
+        return None
     return None
 
 
@@ -100,7 +116,15 @@ def fetch_github(repo: str, branch: str) -> Path:
             say("      git clone 完成")
             return dest
         say("      git clone 失败，改用 zip 下载：" + r.stderr.strip().splitlines()[-1][:120])
-    url = "https://github.com/%s/archive/refs/heads/%s.zip" % (repo, branch)
+    # 归档文件名：GitHub 的格式是 <仓库名>-<ref>.zip
+    repo_name = repo.rstrip("/").split("/")[-1]
+    tag_like = branch.startswith("v") and branch[1:2].isdigit()
+    if tag_like:
+        url = "https://github.com/%s/archive/refs/tags/%s.zip" % (repo, branch)
+        archive_name = "%s-%s.zip" % (repo_name, branch)
+    else:
+        url = "https://github.com/%s/archive/refs/heads/%s.zip" % (repo, branch)
+        archive_name = "%s-%s.zip" % (repo_name, branch)
     try:
         import urllib.request
         say("      下载 " + url)
@@ -110,7 +134,7 @@ def fetch_github(repo: str, branch: str) -> Path:
         raise SystemExit("下载失败：%s\n"
                          "  可改用本地包：python install.py --from zip --zip <文件.zip>" % e)
     # 完整性校验：有官方清单就必须匹配；没有则明确告知风险而不是静默放行
-    expected = fetch_expected_sha256(repo, branch)
+    expected = fetch_expected_sha256(repo, branch, archive_name)
     actual = sha256_of(data)
     if expected:
         if actual != expected:
