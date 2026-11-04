@@ -76,11 +76,17 @@ def check_excel(out: Path, rp: Report) -> set[str]:
     rp.add("Excel 只有一张表", len(wb.sheetnames) == 1, str(wb.sheetnames))
     ws = wb[wb.sheetnames[0]]
 
+    # 表头名从 advice_sheet 取，不在这里另列一份——
+    # 之前写入端写死、这里子串匹配、selftest 集合相等，同一组表头三种语义。
+    from advice_sheet import header_names, banned_headers
     hdr = {str(ws.cell(4, c).value or "") for c in range(1, ws.max_column + 1)}
-    need = ["申报材料", "总分", "奖项区间", "改完提升", "改完总分",
-            "原文是什么", "怎么改", "修改之后的句子"]
-    miss = [n for n in need if not any(n in h for h in hdr)]
+    need = header_names()
+    # 「申报材料 / 修改建议」是合并表头，用前缀匹配；其余要求精确出现
+    miss = [n for n in need
+            if not any(h == n or (n.startswith("申报材料") and n in h) for h in hdr)]
     rp.add("Excel 表头齐全", not miss, "缺 " + "、".join(miss) if miss else "")
+    bad = [n for n in banned_headers() if n in hdr]
+    rp.add("Excel 无多余列", not bad, "不该有 " + "、".join(bad) if bad else "")
 
     all_text = []
     codes: set[str] = set()

@@ -50,38 +50,9 @@ def _same_material(full_name: str, xlsx_name: str) -> bool:
 
 
 def load_items(d):
-    """从汇总 xlsx 里捞上次的建议条目。"""
-    try:
-        from openpyxl import load_workbook
-    except ImportError:
-        return {}
-    f = Path(d) / "北斗奖评分汇总.xlsx"
-    if not f.is_file():
-        return {}
-    wb = load_workbook(f)
-    ws = wb[wb.sheetnames[0]]
-    items, cur = {}, None
-    for row in ws.iter_rows(min_row=5, values_only=True):
-        first = str(row[0] or "")
-        # 实际格式是全角空格开头：'\u30001-M01\u3000推广力度\u3000标题'
-        # 正则要允许前导空白，否则一条都匹配不上（实测踩过）
-        m = re.match(r"^[\u3000\s]*(\d+-M\d\d)[\u3000\s]+([^\u3000\s]+)[\u3000\s]+(.+)", first)
-        if m:
-            if cur:
-                items.setdefault(cur, []).append({
-                    "no": m.group(1),
-                    "dim": m.group(2),
-                    "title": m.group(3),
-                    "original": str(row[9] or ""),
-                    "how": str(row[10] or ""),
-                    "revised": str(row[11] or ""),
-                })
-        else:
-            t = first.strip().replace("\u3000", " ").strip()
-            # 主行是材料名（可能带"申报材料"前缀），只取非空且不像编号的
-            if t and "-M" not in t and not re.match(r"^[第\(（]", t):
-                cur = t
-    return items
+    """从汇总表里读上次的建议条目。布局与解析都在 advice_sheet 里定义。"""
+    from advice_sheet import read as read_advice
+    return read_advice(d)
 
 
 def build_refine_pack(mat_dir, baseline, out):
