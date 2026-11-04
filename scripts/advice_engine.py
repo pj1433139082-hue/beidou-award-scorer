@@ -22,7 +22,15 @@ import re
 #
 # 改后句子用 {orig} 引用原文片段；没有原文可引用时给通用的可抄句式。
 # ---------------------------------------------------------------------------
-RULES: dict[str, dict] = {
+# 机检项的完整定义已迁到 check_catalog.py。
+# 下面三张表是它的**视图**，保留旧名字供现有调用点使用；
+# 新增机检项只需在 check_catalog 里注册一次。
+from check_catalog import (CATALOG as _CATALOG, get as _cat_get,
+                           dims_of as _cat_dims, hints_of as _cat_hints,
+                           points_of as _cat_points)
+
+
+RULES_LEGACY: dict[str, dict] = {
     "C02": {
         "dims": {"value"},
         "title": "效益里分不清哪些已实现、哪些还在规划",
@@ -154,6 +162,14 @@ RULES: dict[str, dict] = {
 }
 
 # 维度兜底：没有具体机检命中时，按维度给三段式建议
+# RULES 以 catalog 为准：catalog 里有的全部覆盖进来，
+# 这样一来 C01/C10 不再因为没有文案而被静默跳过。
+RULES: dict[str, dict] = dict(RULES_LEGACY)
+for _cid, _spec in _CATALOG.items():
+    RULES[_cid] = {"dims": _spec["dims"], "title": _spec["title"],
+                   "how": _spec["how"], "revised": _spec["revised"]}
+
+
 DIM_FALLBACK: dict[str, dict] = {
     "value": {
         "title": "价值性论证不足，缺可复算的效益数字",
