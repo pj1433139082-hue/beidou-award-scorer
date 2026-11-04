@@ -130,6 +130,53 @@ def test_可以显式指定清单所在分支(inst, monkeypatch):
     assert any("/release/" in u for u in seen), seen
 
 
+def test_源里没有目标条目时继续试下一个源(inst, monkeypatch):
+    """raw.githubusercontent 的 CDN 会滞后数分钟。
+
+    实测：GitHub API 已能读到 v3.6.1，raw 仍返回只含 v3.5.0/v3.6.0 的旧清单。
+    第一源拿到「有效但过期」的内容时必须继续问下一个源，不能就此 return None。
+    """
+    old = b"%s  beidou-award-scorer-v3.6.0.zip\n" % (("a" * 64).encode())
+    new = (b"%s  beidou-award-scorer-v3.6.0.zip\n" % (("a" * 64).encode())
+           + b"%s  beidou-award-scorer-v3.6.1.zip\n" % (("b" * 64).encode()))
+    responses = [old, old, new, new]   # 前两个源过期，后两个是新的
+    seen = []
+
+    class Resp:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return io.BytesIO(self.body)
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(url, *a, **k):
+        seen.append(url if isinstance(url, str) else url.full_url)
+        return Resp(responses[min(len(seen) - 1, len(responses) - 1)])
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    got = inst.fetch_expected_sha256("x/y", "v3.6.1", "beidou-award-scorer-v3.6.1.zip")
+    assert got == "b" * 64, got
+    assert len(seen) > 1, "第一个源过期后没有继续尝试"
+
+
+def test_所有源都没有目标条目时返回_None(inst, monkeypatch):
+    payload = b"%s  beidou-award-scorer-v3.5.0.zip\n" % (("a" * 64).encode())
+
+    class Resp:
+        def __enter__(self):
+            return io.BytesIO(payload)
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: Resp())
+    assert inst.fetch_expected_sha256(
+        "x/y", "v9.9.9", "beidou-award-scorer-v9.9.9.zip") is None
+
+
 # ---------- tag 与分支走不同 URL ----------
 
 def test_tag_形态的_ref_走_tags_路径(inst):

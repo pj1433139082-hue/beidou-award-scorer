@@ -76,8 +76,16 @@ def fetch_expected_sha256(repo: str, branch: str, archive_name: str = "",
     # 原因：raw.githubusercontent 按 ref 取文件，用 v3.6.0 当 ref 时拿到的
     # 是那个 tag 时刻的旧清单（甚至 200 但内容不含新版本），于是明明发布了
     # 校验和却读不到。清单是「仓库当前的发布记录」，属于 main，不属于某个 tag。
+    # 两个源都试：raw.githubusercontent 有约 5 分钟强制缓存，刚发版时读到的
+    # 是旧内容（实测：GitHub API 已能读到 v3.6.1，raw 仍返回 300 字节旧版）。
+    # jsDelivr 镜像更新更快，作为第二源。
+    sources = []
     for name in ("SHA256SUMS", "sha256sums.txt"):
-        url = "https://raw.githubusercontent.com/%s/%s/%s" % (repo, sums_ref, name)
+        sources.append("https://raw.githubusercontent.com/%s/%s/%s"
+                       % (repo, sums_ref, name))
+        sources.append("https://cdn.jsdelivr.net/gh/%s@%s/%s"
+                       % (repo, sums_ref, name))
+    for url in sources:
         try:
             with urllib.request.urlopen(url, timeout=20) as resp:
                 text = resp.read().decode("utf-8", "replace")
@@ -104,7 +112,9 @@ def fetch_expected_sha256(repo: str, branch: str, archive_name: str = "",
         # 清单里只有裸哈希（没有文件名）时，视为对「唯一这个包」的校验
         if "" in entries and len(entries) == 1:
             return entries[""]
-        return None
+        # 这个源没有目标归档 —— 可能是 CDN 缓存还没刷新（实测 raw 会滞后数分钟，
+        # 明明 GitHub API 已能看到新版本，raw 仍返回旧内容）。继续试下一个源，
+        # 不要在这里 return None。
     return None
 
 
