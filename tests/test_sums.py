@@ -85,6 +85,51 @@ def test_注释行被忽略(inst, monkeypatch):
     assert got == "d" * 64
 
 
+def test_清单固定从默认分支读(inst, monkeypatch):
+    """清单属于 main，不属于某个 tag。
+
+    raw.githubusercontent 按 ref 取文件：用 v3.6.0 当 ref 时拿到的是那个 tag
+    时刻的旧清单，于是明明发布了校验和却读不到（实测返回 200 但不含新版本）。
+    """
+    seen = []
+
+    class Resp:
+        def __enter__(self):
+            return io.BytesIO(b"%s  beidou-award-scorer-v3.6.0.zip\n" % (("e" * 64).encode()))
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(url, *a, **k):
+        seen.append(url if isinstance(url, str) else url.full_url)
+        return Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    inst.fetch_expected_sha256("x/y", "v3.6.0", "beidou-award-scorer-v3.6.0.zip")
+    assert seen, "没有发起任何请求"
+    assert "/main/SHA256SUMS" in seen[0], seen[0]
+    assert "/v3.6.0/" not in seen[0], "清单不该按 tag 读：" + seen[0]
+
+
+def test_可以显式指定清单所在分支(inst, monkeypatch):
+    seen = []
+
+    class Resp:
+        def __enter__(self):
+            return io.BytesIO(b"")
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(url, *a, **k):
+        seen.append(url if isinstance(url, str) else url.full_url)
+        return Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    inst.fetch_expected_sha256("x/y", "dev", "a.zip", sums_ref="release")
+    assert any("/release/" in u for u in seen), seen
+
+
 # ---------- tag 与分支走不同 URL ----------
 
 def test_tag_形态的_ref_走_tags_路径(inst):
