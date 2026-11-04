@@ -65,14 +65,25 @@ ORDER = ["D", "C", "B", "A"]
 
 
 def grade_cap_value(rubric: dict, grade: str) -> float:
-    """某证据等级能拿到的分数上限（比例）。唯一来源是 rubric。"""
+    """某证据等级能拿到的分数上限（比例）。唯一来源是 rubric。
+
+    rubric 缺 cap 就报错，不兜底（ADR-0002）。
+
+    这里曾经有一个兜底表 {"A":1.0,"B":0.75,"C":0.5,"D":0.2}——那等于在代码里
+    又存了一份 cap，与本函数上面的注释直接矛盾。删掉它是有意的：评分卡是用户
+    提供的输入文件，缺字段是输入错误，应该在启动时被拒绝，而不是在评分中段被
+    一个「作者没写」的系数悄悄兜住。
+    """
     eg = (rubric or {}).get("evidence_grades") or {}
     spec = eg.get(grade) or {}
     cap = spec.get("cap")
     if isinstance(cap, (int, float)):
         return float(cap)
-    # rubric 没写就用最保守的，不猜
-    return {"A": 1.0, "B": 0.75, "C": 0.5, "D": 0.2}.get(grade, 0.5)
+    raise RubricError(
+        "评分卡缺少证据等级的 cap：evidence_grades.%s.cap\n"
+        "  等级 %s 没有上限就无法评分——补上该字段，或换一份完整的评分卡。\n"
+        "  参考 assets/rubric.example.json 的 evidence_grades 结构。"
+        % (grade, grade))
 
 def norm(s):
     return re.sub(r"\s+", "", str(s or ""))
@@ -250,7 +261,16 @@ def score_one(doc, checks, judgments, rubric, award, onsite=None):
         try:
             on = float(onsite)
             out["onsite_score"] = on
-            out["final_weighted"] = round(0.75 * on + 0.25 * ai_score, 1)
+            # 权重属于赛事规则，由评分卡拥有（ADR-0001）。
+            # 写死 0.75/0.25 的后果是「改 rubric 不生效」，而 rubric 里就摆着
+            # 一份 {"on_site":0.75,"ai":0.25}，会让人以为它生效了。
+            w = (rubric.get("scoring_rules") or {}).get("weights") or {}
+            w_on, w_ai = w.get("on_site"), w.get("ai")
+            if not isinstance(w_on, (int, float)) or not isinstance(w_ai, (int, float)):
+                raise RubricError(
+                    "评分卡缺少 scoring_rules.weights.on_site / .ai，无法做现场与书面合成。\n"
+                    "  参考 assets/rubric.example.json 的 scoring_rules.weights 结构。")
+            out["final_weighted"] = round(w_on * on + w_ai * ai_score, 1)
             out["conflict_review"] = abs(on - ai_score) / max(on, 1e-9) > 0.10
         except ValueError:
             pass

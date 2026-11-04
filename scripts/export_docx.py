@@ -26,6 +26,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from advice_engine import build_items  # noqa: E402
+from material_role import declared_track  # noqa: E402
 
 # 白底黑字：正文纯黑，辅助信息深灰。不用任何彩色——打印和复印都不失真，
 # 也不让颜色去暗示"重要程度"，重要性靠文字排序表达。
@@ -224,10 +225,14 @@ def build_reference_note(name: str, plain: str, out_path):
         para(doc, line, size=10, indent=0.5, after=3)
 
     # 声明的赛道（帮人判断它原本投的是哪个奖）
-    m = re.search(r"参赛赛道\s*[：:]\s*([^\n\r]{2,40})", (plain or "")[:3000])
-    if m:
+    # 必须走 material_role.declared_track()，不要内联正则：
+    # 内联版本虽然逐字相同（含魔数 3000），但漏掉了它的后置校验
+    # （末字符是冒号或长度<3 时返回 None），会写出一个 material_role
+    # 自己会拒绝的赛道名。
+    track = declared_track(plain)
+    if track:
         h(doc, "三、正文声明的赛道")
-        para(doc, m.group(1).strip(), size=10, indent=0.5, after=3)
+        para(doc, track, size=10, indent=0.5, after=3)
         para(doc, "注意：若与文件名前缀不一致，说明改赛道后未改名，"
                   "评分时应以正文声明为准。", size=9.5, color=GREY, indent=0.5, after=3)
 
