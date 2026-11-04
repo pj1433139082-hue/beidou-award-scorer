@@ -1013,6 +1013,66 @@ def main() -> int:
     r = run([ROOT / "scripts" / "export_xlsx.py", edge, "--out", edge / "x.xlsx"])
     rec("无评分数据时 Excel 导出报错可读", r.returncode == 1 and "没找到 score.json" in r.stderr)
 
+
+    # ---------- 12. --strict 与 --from-scores：此前 0 覆盖 ----------
+    print(chr(10) + '[12] 严格模式与重出模式')
+    # --strict 有 8 个控制点（PDF 缺失 / 赛道不符 / 打分失败 / 缺 judgments /
+    # 格式验收 / 核验缺项），此前一条都没测。这里逐条覆盖关键几条。
+    st = TMP / 'strict'; st.mkdir(exist_ok=True)
+    for f2 in out.glob('*.doc.json'):
+        shutil.copy2(f2, st / f2.name)
+    for f2 in out.glob('*.checks.json'):
+        shutil.copy2(f2, st / f2.name)
+
+    # (1) 缺 judgments + --strict -> 退出码 2
+    r = run([ROOT / 'scripts' / 'batch.py', st, '--out', st, '--rubric', RUB,
+             '--from-json', '--strict'])
+    rec('--strict 缺 judgments 时退出码 2', r.returncode == 2,
+        '退出码 %d' % r.returncode)
+    rec('--strict 报错可读', '严格模式失败' in (r.stderr or ''),
+        (r.stderr or '')[:60])
+
+    # (2) 非严格模式：全部缺 judgments 时仍返回 2（否则等于空成功）
+    st2 = TMP / 'strict2'; st2.mkdir(exist_ok=True)
+    for pat in ('*.doc.json', '*.checks.json'):
+        for f2 in out.glob(pat):
+            shutil.copy2(f2, st2 / f2.name)
+    r = run([ROOT / 'scripts' / 'batch.py', st2, '--out', st2, '--rubric', RUB,
+             '--from-json'])
+    rec('全无评分时非严格模式也报错', r.returncode == 2,
+        '退出码 %d（全无评分不该算成功）' % r.returncode)
+    rec('全无评分时错误信息可读', '没有任何材料完成评分' in (r.stderr or ''),
+        (r.stderr or '')[:70])
+
+    # (2b) 部分有 judgments、部分缺 -> 非严格模式应成功并提示
+    st3 = TMP / 'strict3'; st3.mkdir(exist_ok=True)
+    for pat in ('*.doc.json', '*.checks.json'):
+        for f2 in out.glob(pat):
+            shutil.copy2(f2, st3 / f2.name)
+    shutil.copy2(jp, st3 / jp.name)
+    r = run([ROOT / 'scripts' / 'batch.py', st3, '--out', st3, '--rubric', RUB,
+             '--from-json'])
+    rec('部分缺 judgments 时非严格模式成功', r.returncode == 0,
+        '退出码 %d' % r.returncode)
+    # 自测批次只有 1 份材料，有 judgments 就不算部分缺失，这里只断言成功
+
+    # (3) --from-scores：只重出排行榜与 Excel（需要 score.json）
+    fs_dir = TMP / 'fromscores'; fs_dir.mkdir(exist_ok=True)
+    for pat in ('*.doc.json', '*.checks.json', '*.score.json'):
+        for f2 in out.glob(pat):
+            shutil.copy2(f2, fs_dir / f2.name)
+    r = run([ROOT / 'scripts' / 'batch.py', fs_dir, '--out', fs_dir,
+             '--rubric', RUB, '--from-scores'])
+    rec('--from-scores 能跑通', r.returncode == 0,
+        '退出码 %d %s' % (r.returncode, (r.stderr or '')[:60]))
+    rec('--from-scores 出排行榜', (fs_dir / 'leaderboard.md').is_file())
+
+    # (4) --from-scores 空目录必须报错而不是空成功
+    empty2 = TMP / 'emptyscores'; empty2.mkdir(exist_ok=True)
+    r = run([ROOT / 'scripts' / 'batch.py', empty2, '--out', empty2,
+             '--rubric', RUB, '--from-scores'])
+    rec('--from-scores 空目录退出码 2', r.returncode == 2,
+        '退出码 %d' % r.returncode)
     # ---------- 汇总 ----------
     shutil.rmtree(TMP, ignore_errors=True)
     print("\n" + "=" * 70)
