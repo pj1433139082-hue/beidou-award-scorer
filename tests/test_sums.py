@@ -1,0 +1,117 @@
+"""sums.py 与安装器按归档名校验的测试。
+
+关键约束：分支归档的哈希是自指的（记录它会改变它），只有 tag 归档稳定。
+"""
+import importlib.util
+import io
+import sys
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load(name, rel):
+    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def sums():
+    return _load("sums_mod", "scripts/sums.py")
+
+
+@pytest.fixture(scope="module")
+def inst():
+    return _load("install_sum", "install.py")
+
+
+def _fake_urlopen(payload, monkeypatch):
+    class Resp:
+        def __enter__(self):
+            return io.BytesIO(payload)
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: Resp())
+
+
+# ---------- 归档名精确匹配 ----------
+
+def test_按归档文件名精确取哈希(inst, monkeypatch):
+    """清单里有多条时，必须按文件名取对应那条，不能随便返回第一条。"""
+    payload = ("%s  beidou-award-scorer-v3.5.0.zip\n"
+               "%s  beidou-award-scorer-v3.4.0.zip\n"
+               % ("a" * 64, "b" * 64)).encode()
+    _fake_urlopen(payload, monkeypatch)
+    got = inst.fetch_expected_sha256("x/y", "v3.5.0", "beidou-award-scorer-v3.5.0.zip")
+    assert got == "a" * 64
+
+
+def test_取另一个版本的哈希(inst, monkeypatch):
+    payload = ("%s  beidou-award-scorer-v3.5.0.zip\n"
+               "%s  beidou-award-scorer-v3.4.0.zip\n"
+               % ("a" * 64, "b" * 64)).encode()
+    _fake_urlopen(payload, monkeypatch)
+    got = inst.fetch_expected_sha256("x/y", "v3.4.0", "beidou-award-scorer-v3.4.0.zip")
+    assert got == "b" * 64
+
+
+def test_清单里没有该归档时返回_None(inst, monkeypatch):
+    """多条记录但都不是要的那个 -> 返回 None，让调用方走「跳过校验并提示」。"""
+    payload = ("%s  beidou-award-scorer-v3.5.0.zip\n" % ("a" * 64)).encode()
+    _fake_urlopen(payload, monkeypatch)
+    got = inst.fetch_expected_sha256("x/y", "main", "beidou-award-scorer-main.zip")
+    assert got is None
+
+
+def test_只有一条记录时兼容单哈希格式(inst, monkeypatch):
+    _fake_urlopen(("c" * 64 + "\n").encode(), monkeypatch)
+    assert inst.fetch_expected_sha256("x/y", "v1.0.0", "any.zip") == "c" * 64
+
+
+def test_注释行被忽略(inst, monkeypatch):
+    """清单带注释头，不能把注释当成哈希。"""
+    payload = ("# 这是注释\n"
+               "# 校验方式：sha256sum -c SHA256SUMS\n\n"
+               "%s  beidou-award-scorer-v3.5.0.zip\n" % ("d" * 64)).encode()
+    _fake_urlopen(payload, monkeypatch)
+    got = inst.fetch_expected_sha256("x/y", "v3.5.0", "beidou-award-scorer-v3.5.0.zip")
+    assert got == "d" * 64
+
+
+# ---------- tag 与分支走不同 URL ----------
+
+def test_tag_形态的_ref_走_tags_路径(inst):
+    """v3.5.0 这种应该当 tag；否则归档名对不上清单。"""
+    for ref in ("v3.5.0", "v1.0.0", "v10.2.3"):
+        assert ref.startswith("v") and ref[1:2].isdigit(), ref
+    for ref in ("main", "dev", "master", "release-2026"):
+        assert not (ref.startswith("v") and ref[1:2].isdigit()), ref
+
+
+# ---------- sums.py 的读写 ----------
+
+def test_read_sums_解析注释与空行(sums, tmp_path, monkeypatch):
+    p = tmp_path / "SHA256SUMS"
+    p.write_text("# 注释\n\n%s  a.zip\n%s  b.zip\n" % ("1" * 64, "2" * 64),
+                 encoding="utf-8")
+    monkeypatch.setattr(sums, "SUMS", p)
+    got = sums.read_sums()
+    assert got == {"a.zip": "1" * 64, "b.zip": "2" * 64}
+
+
+def test_read_sums_缺文件返回空(sums, tmp_path, monkeypatch):
+    monkeypatch.setattr(sums, "SUMS", tmp_path / "nope")
+    assert sums.read_sums() == {}
+
+
+def test_sha256_file_与_bytes_一致(sums, tmp_path):
+    p = tmp_path / "x.bin"
+    p.write_bytes(b"hello world")
+    assert sums.sha256_file(p) == sums.sha256_bytes(b"hello world")
