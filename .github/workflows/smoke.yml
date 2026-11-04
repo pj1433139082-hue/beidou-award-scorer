@@ -83,6 +83,13 @@ jobs:
           PY
 
 
+      - name: Unit tests for the deep modules
+        run: |
+          # 三个深模块的单元测试。纯函数接缝，不建目录不起进程，
+          # 跑得比端到端自测快得多（0.1 秒 vs 十几秒）。
+          python -m pip install --quiet pytest
+          python -m pytest tests/ -q
+
       - name: End-to-end pipeline selftest
         run: python scripts/selftest_pipeline.py
 
