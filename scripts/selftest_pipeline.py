@@ -905,6 +905,48 @@ def main() -> int:
             rec("%s 已改走 MaterialRecord" % fn, needle in src_x,
                 "还在自己扫 score.json —— 键会再次漂移")
 
+    # ---------- 10p. AdviceSheet：汇总表布局只该有一份 ---
+    print("\n[10p] AdviceSheet")
+    try:
+        import advice_sheet as _AS
+    except ImportError:
+        _AS = None
+    rec("advice_sheet.py 可导入", _AS is not None)
+    if _AS:
+        # 列号必须随维度数变化——硬编码 9/10/11 只在维度数=5 时成立
+        c3, c5 = _AS.columns(3), _AS.columns(5)
+        rec("列号随维度数右移", c3["orig"] != c5["orig"],
+            "列号写死了（维度数不同的批次会读错列）")
+
+        # 编号格式往返
+        lab = _AS.item_label(1, "M01", "价值性", "缺基准值")
+        got = _AS.parse_item_label(lab)
+        rec("编号格式可往返", got == ("1-M01", "价值性", "缺基准值"), str(got))
+        rec("非建议行返回 None", _AS.parse_item_label("水厂设备卫士——污水厂") is None)
+
+        # 真表能读出建议（自测批次未必出 Excel，有就查）
+        xl = out / "北斗奖评分汇总.xlsx"
+        items = _AS.read(out) if xl.is_file() else {}
+        n_items = sum(len(v) for v in items.values())
+        rec("能从真表读出建议", n_items > 0 if xl.is_file() else True,
+            ("读到 %d 条" % n_items) if xl.is_file() else "本批无 Excel，跳过")
+        # 每条都必须有三段式字段
+        if items:
+            first = next(iter(items.values()))[0] if next(iter(items.values())) else {}
+            rec("建议条目带三段式字段",
+                all(k in first for k in ("original", "how", "revised")))
+
+        # 两个旧调用方必须都改走它
+        for fn in ("modes.py", "check_compliance.py"):
+            src_a = (ROOT / "scripts" / fn).read_text(encoding="utf-8")
+            rec("%s 已改走 AdviceSheet" % fn,
+                "from advice_sheet import read as read_advice" in src_a,
+                "还在自己解析 xlsx —— 列号会再次漂移")
+        # verify_format 的表头也必须来自它
+        src_vf = (ROOT / "scripts" / "verify_format.py").read_text(encoding="utf-8")
+        rec("verify_format 用统一表头", "from advice_sheet import header_names" in src_vf,
+            "表头又分家了（写入/验收各一份）")
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
@@ -950,11 +992,12 @@ def main() -> int:
     print("结果：%d/%d 通过" % (passed, len(R)))
     if failed:
         print("失败项：")
-        for f in failed:
-            print("  - " + f)
+        for n in failed:
+            print("  - " + n)
         return 1
     print("全部通过。")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -57,45 +57,10 @@ def load_doc(d: Path, name: str):
     return None
 
 
-def _col(row, i: int) -> str:
-    """安全取列：索引越界返回空串。"""
-    try:
-        v = row[i]
-        return "" if v is None else str(v)
-    except (IndexError, TypeError):
-        return ""
-
-
 def load_items(d: Path) -> dict:
-    try:
-        from openpyxl import load_workbook
-    except ImportError:
-        return {}
-    f = Path(d) / "北斗奖评分汇总.xlsx"
-    if not f.is_file():
-        return {}
-    wb = load_workbook(f)
-    ws = wb[wb.sheetnames[0]]
-    items, cur = {}, None
-    for row in ws.iter_rows(min_row=5, values_only=True):
-        first = str(row[0] or "")
-        m = re.match(r"^[\u3000\s]*(\d+-M\d\d)[\u3000\s]+([^\u3000\s]+)[\u3000\s]+(.+)", first)
-        if m:
-            if cur:
-                items.setdefault(cur, []).append({
-                    "no": m.group(1),
-                    "dim": m.group(2),
-                    "title": m.group(3),
-                    # xlsx 列数不定（维度多的奖项列会右移），取不到就给空
-                    "original": str(_col(row, 9)),
-                    "how": str(_col(row, 10)),
-                    "revised": str(_col(row, 11)),
-                })
-        else:
-            t = first.strip().replace("\u3000", " ").strip()
-            if t and "-M" not in t and not re.match(r"^[第\(（]", t):
-                cur = t
-    return items
+    """从汇总表里读上次的建议条目。布局与解析都在 advice_sheet 里定义。"""
+    from advice_sheet import read as read_advice
+    return read_advice(d)
 
 
 # 每类建议要求出现的「新要素」信号词
