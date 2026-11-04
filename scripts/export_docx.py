@@ -245,20 +245,9 @@ def build_reference_note(name: str, plain: str, out_path):
 
 
 def load(src: Path):
-    rows = []
-    for sf in sorted(src.glob("*.score.json")):
-        d = json.loads(sf.read_text(encoding="utf-8"))
-        stem = sf.name.replace(".score.json", "")
-        cf = src / (stem + ".checks.json")
-        d["_checks"] = {x["id"]: x for x in
-                        (json.loads(cf.read_text(encoding="utf-8")).get("checks", [])
-                         if cf.is_file() else [])}
-        df = src / (stem + ".doc.json")
-        d["_plain"] = (json.loads(df.read_text(encoding="utf-8")).get("plain", "")
-                       if df.is_file() else "")
-        d["_stem"] = stem
-        rows.append(d)
-    return rows
+    """读一批评分结果，连机检与原文。键与缺失语义由 MaterialRecord 统一。"""
+    from material_record import load_dir
+    return [rec.as_row() for rec in load_dir(src, with_context=True)]
 
 
 def build_merged(rows, out_path: Path):
