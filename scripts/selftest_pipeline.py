@@ -947,6 +947,35 @@ def main() -> int:
         rec("verify_format 用统一表头", "from advice_sheet import header_names" in src_vf,
             "表头又分家了（写入/验收各一份）")
 
+
+    # ---------- 10q. CheckCatalog：机检项与建议文案必须一一对应 ----------
+    print(chr(10) + '[10q] CheckCatalog')
+    try:
+        import check_catalog as _CC
+        import checks as _CK
+    except ImportError:
+        _CC = _CK = None
+    rec('check_catalog.py 可导入', _CC is not None)
+    if _CC and _CK:
+        ids = {fn.__name__.split('_')[0].upper() for fn in _CK.CHECKS}
+        # C01/C10 曾经在 CHECKS 里有、在 RULES 里没有，命中时建议被静默丢弃
+        miss = _CC.missing_from(ids)
+        rec('每个机检都有建议文案', not miss,
+            '缺 ' + '、'.join(miss) + '（命中时建议会被静默丢弃）' if miss else '')
+        orph = _CC.orphaned_in(ids)
+        rec('没有指向不存在机检的文案', not orph,
+            '多出 ' + '、'.join(orph) if orph else '')
+        # advance_engine 的 RULES 必须与 catalog 一致
+        import advice_engine as _AE
+        rec('RULES 覆盖全部机检', set(_AE.RULES) >= ids,
+            'RULES 缺 ' + '、'.join(sorted(ids - set(_AE.RULES))))
+        # 必须项：没有文案时 require() 要报错而不是静默返回
+        try:
+            _CC.require('ZZZ_NOT_A_CHECK')
+            rec('未定义的机检会被 require 拒绝', False, '没有报错')
+        except KeyError:
+            rec('未定义的机检会被 require 拒绝', True)
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
