@@ -63,7 +63,8 @@ def sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def fetch_expected_sha256(repo: str, branch: str, archive_name: str = "") -> str | None:
+def fetch_expected_sha256(repo: str, branch: str, archive_name: str = "",
+                          sums_ref: str = "main") -> str | None:
     """尝试取官方发布的 SHA256 清单。取不到就返回 None（不阻断安装）。
 
     为什么需要它：TLS 只保证「内容来自 github.com」，不保证「来自作者」。
@@ -71,8 +72,12 @@ def fetch_expected_sha256(repo: str, branch: str, archive_name: str = "") -> str
     其中的 scripts/setup.py。清单把「信任来源」从「域名」收紧到「发布内容」。
     """
     import urllib.request
+    # 清单固定从默认分支读，不跟着要安装的 ref 走。
+    # 原因：raw.githubusercontent 按 ref 取文件，用 v3.6.0 当 ref 时拿到的
+    # 是那个 tag 时刻的旧清单（甚至 200 但内容不含新版本），于是明明发布了
+    # 校验和却读不到。清单是「仓库当前的发布记录」，属于 main，不属于某个 tag。
     for name in ("SHA256SUMS", "sha256sums.txt"):
-        url = "https://raw.githubusercontent.com/%s/%s/%s" % (repo, branch, name)
+        url = "https://raw.githubusercontent.com/%s/%s/%s" % (repo, sums_ref, name)
         try:
             with urllib.request.urlopen(url, timeout=20) as resp:
                 text = resp.read().decode("utf-8", "replace")
