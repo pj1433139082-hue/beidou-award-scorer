@@ -58,6 +58,35 @@ def default_targets() -> list[Path]:
     return out
 
 
+def sha256_of(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+def fetch_expected_sha256(repo: str, branch: str) -> str | None:
+    """尝试取官方发布的 SHA256 清单。取不到就返回 None（不阻断安装）。
+
+    为什么需要它：TLS 只保证「内容来自 github.com」，不保证「来自作者」。
+    如果仓库或账号被入侵，下载到的就是攻击者的代码——而安装器随后会执行
+    其中的 scripts/setup.py。清单把「信任来源」从「域名」收紧到「发布内容」。
+    """
+    import urllib.request
+    for name in ("SHA256SUMS", "sha256sums.txt"):
+        url = "https://raw.githubusercontent.com/%s/%s/%s" % (repo, branch, name)
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:
+                text = resp.read().decode("utf-8", "replace")
+        except Exception:
+            continue
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and (parts[-1].endswith(".zip") or parts[-1] == "*"):
+                return parts[0].lower()
+            if len(parts) == 1 and len(parts[0]) == 64:
+                return parts[0].lower()
+    return None
+
+
 def fetch_github(repo: str, branch: str) -> Path:
     """优先用 git clone；没有 git 就退回下载 zip。"""
     tmp = Path(tempfile.mkdtemp(prefix="beidou-install-"))
@@ -80,6 +109,21 @@ def fetch_github(repo: str, branch: str) -> Path:
     except Exception as e:
         raise SystemExit("下载失败：%s\n"
                          "  可改用本地包：python install.py --from zip --zip <文件.zip>" % e)
+    # 完整性校验：有官方清单就必须匹配；没有则明确告知风险而不是静默放行
+    expected = fetch_expected_sha256(repo, branch)
+    actual = sha256_of(data)
+    if expected:
+        if actual != expected:
+            raise SystemExit(
+                "下载内容校验失败，已中止。\n"
+                "  期望 SHA256：%s\n"
+                "  实际 SHA256：%s\n"
+                "  可能是分支被改过，或下载被中间人替换。请核对后再装。" % (expected, actual))
+        say("      内容校验通过（SHA256 %s…）" % actual[:12])
+    else:
+        say("      仓库未发布 SHA256SUMS，跳过内容校验")
+        say("      提示：TLS 只保证内容来自 github.com，不保证来自仓库作者")
+
     zpath = tmp / "src.zip"
     zpath.write_bytes(data)
     return unpack_zip(zpath, tmp)
@@ -114,6 +158,29 @@ def copy_skill(src: Path, dest: Path) -> bool:
     return True
 
 
+def confirm_trust(source_kind: str, yes: bool) -> bool:
+    """执行下载来的代码前先确认。--yes 可跳过（CI 用）。
+
+    为什么需要：安装器会跑目标目录里的 scripts/setup.py --install。
+    那是**从网络下载的代码**，而下载只靠 TLS 保证来源域名，不保证作者身份。
+    在动手执行前把这件事说清楚，是最后一道用户可控的关口。
+    """
+    if yes or source_kind == "dir":
+        return True          # 本地目录是用户自己的东西，不用问
+    if not sys.stdin.isatty():
+        say("      非交互环境，跳过确认（如需显式确认请加 --yes）")
+        return True
+    say("")
+    say("  即将执行：<安装目标>/scripts/setup.py --install")
+    say("  来源：%s" % ("GitHub 下载" if source_kind == "github" else "本地 zip 包"))
+    say("  该脚本会检查并安装 Python 依赖（python-docx / PyMuPDF / openpyxl）。")
+    try:
+        ans = input("  继续？[y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return ans in ("y", "yes", "是")
+
+
 def run_setup(target: Path, do_self_test: bool) -> bool:
     """在目标目录里跑依赖体检与安装。"""
     setup = target / "scripts" / "setup.py"
@@ -141,6 +208,8 @@ def main() -> int:
     ap.add_argument("--dir", dest="dir_path")
     ap.add_argument("--target", action="append", help="安装目标目录（可重复）")
     ap.add_argument("--no-setup", action="store_true")
+    ap.add_argument("--yes", action="store_true",
+                    help="跳过执行下载代码前的确认（CI / 自动化用）")
     ap.add_argument("--no-self-test", action="store_true")
     a = ap.parse_args()
 
@@ -183,6 +252,13 @@ def main() -> int:
 
         if not a.no_setup:
             say("[3/4] 准备依赖")
+            # 执行下载来的代码前先确认。这是最后一道用户可控的关口：
+            # 下载只靠 TLS 保证「来自 github.com」，不保证「来自作者」。
+            if any((t / "scripts" / "setup.py").is_file() for t in targets):
+                if not confirm_trust(a.src, a.yes):
+                    say("      已取消。技能文件已就位，依赖请稍后手动准备：")
+                    say("        python <安装目标>/scripts/setup.py --install")
+                    return 0
             for t in targets:
                 if (t / "scripts" / "setup.py").is_file():
                     run_setup(t, not a.no_self_test)
