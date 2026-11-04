@@ -28,14 +28,9 @@ from pathlib import Path
 
 
 def load_round(d):
-    out = {}
-    for f in sorted(Path(d).glob("*.score.json")):
-        try:
-            x = json.loads(f.read_text(encoding="utf-8"))
-            out[x.get("name") or f.stem] = x
-        except Exception:
-            pass
-    return out
+    """读一轮结果，键是材料 name（ADR-0003）。"""
+    from material_record import load_index
+    return {name: rec.raw for name, rec in load_index(d).items()}
 
 
 def analyze(rounds):

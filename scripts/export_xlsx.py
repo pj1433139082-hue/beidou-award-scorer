@@ -69,29 +69,20 @@ def strip_award(name: str) -> str:
 
 
 def collect(src: Path) -> list[dict]:
-    out = []
-    for sf in sorted(src.glob("*.score.json")):
+    """读一批评分结果，连机检、原文、建议一起算好。
+
+    迁移到 MaterialRecord：键的选择、缺失字段语义、私有字段都归它管，
+    这里只负责把结果摊平成导出器要的 dict（见 as_row）。
+    """
+    from material_record import load_dir
+    rows = []
+    for rec in load_dir(src, with_context=True):
         try:
-            d = json.loads(sf.read_text(encoding="utf-8"))
+            rec.advice = build_items(rec.as_row())
         except Exception:
-            continue
-        if "dimensions" not in d:
-            continue
-        stem = sf.name.replace(".score.json", "")
-        cf = src / (stem + ".checks.json")
-        d["_checks"] = {c["id"]: c for c in
-                        (json.loads(cf.read_text(encoding="utf-8")).get("checks", [])
-                         if cf.is_file() else [])}
-        df = src / (stem + ".doc.json")
-        d["_plain"] = (json.loads(df.read_text(encoding="utf-8")).get("plain", "")
-                       if df.is_file() else "")
-        d["_stem"] = stem
-        try:
-            d["_items"] = build_items(d)
-        except Exception:
-            d["_items"] = []
-        out.append(d)
-    return out
+            rec.advice = []
+        rows.append(rec.as_row())
+    return rows
 
 
 def build_sheet(wb, rows):

@@ -38,30 +38,15 @@ from pathlib import Path
 
 
 def load_scores(d):
-    out = {}
-    for f in sorted(Path(d).glob("*.score.json")):
-        try:
-            x = json.loads(f.read_text(encoding="utf-8"))
-            out[x.get("name") or f.stem] = x
-        except Exception:
-            pass
-    return out
+    """读一批评分结果，键是材料 name（ADR-0003）。"""
+    from material_record import load_index
+    return {name: rec.raw for name, rec in load_index(d).items()}
 
 
 def _same_material(full_name: str, xlsx_name: str) -> bool:
-    """xlsx 的短名是否对应这份材料（精确还原，不模糊匹配）。
-
-    xlsx 写的是 strip_award 之后的短名，所以判断依据是：
-      full_name 去掉奖项前缀后 == xlsx_name
-    """
-    if not full_name or not xlsx_name:
-        return False
-    if full_name == xlsx_name:
-        return True
-    # 去掉 "<奖项>-" 或 "<奖项>－" 前缀
-    stripped = re.sub(r"^(金点子|金刚钻|金引擎|金智囊|金火炬|特别奖-[^\s\-－—]*)[-－—\s]*",
-                      "", full_name)
-    return stripped == xlsx_name
+    """xlsx 的短名是否对应这份材料。规则见 material_record.same_material。"""
+    from material_record import same_material
+    return same_material(full_name, xlsx_name)
 
 
 def load_items(d):

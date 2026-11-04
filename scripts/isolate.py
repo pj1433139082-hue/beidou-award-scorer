@@ -178,14 +178,9 @@ def unseal(workspace):
 
 def audit(a, b):
     def load(d):
-        out = {}
-        for f in d.rglob("*.score.json"):
-            try:
-                x = json.loads(f.read_text(encoding="utf-8"))
-                out[x["name"]] = x["ai_score"]
-            except Exception:
-                pass
-        return out
+        """读一棵目录树下的全部评分结果，键是材料 name（ADR-0003）。"""
+        from material_record import load_index
+        return {name: rec.total for name, rec in load_index(d, recursive=True).items()}
 
     sa, sb = load(a), load(b)
     common = set(sa) & set(sb)

@@ -855,6 +855,56 @@ def main() -> int:
         "declared_track(plain)" in src_ed,
         "内联了赛道正则（ADR 外的问题：漏掉后置校验）")
 
+    # ---------- 10o. MaterialRecord：一份材料只该有一种身份 ----------
+    print("\n[10o] MaterialRecord")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        import material_record as _MR
+    except ImportError:
+        _MR = None
+    rec("material_record.py 可导入", _MR is not None)
+    if _MR:
+        rs = _MR.load_dir(out, with_context=True)
+        rec("能读取一批评分结果", len(rs) > 0, "读到 %d 份" % len(rs))
+        if rs:
+            rec("记录有 name", bool(rs[0].name))
+            rec("记录有总分", rs[0].total >= 0)
+            rec("load_dir 带上机检结论", len(rs[0].checks) > 0)
+            rec("load_dir 带上材料原文", len(rs[0].plain) > 0)
+
+        # ADR-0003：缺 name 必须报错，不许静默兜底
+        try:
+            _MR.MaterialRecord({"ai_score": 50})
+            rec("缺 name 会被拒绝", False, "没有报错——静默兜底会让坏数据冒充别份材料")
+        except _MR.CorruptRecord:
+            rec("缺 name 会被拒绝", True)
+
+        # as_row 的下划线字段名必须与导出器一致（迁移时踩过：_advice vs _items）
+        if rs:
+            row = rs[0].as_row()
+            rec("as_row 带 _items（导出器按此取建议）", "_items" in row,
+                "导出器取 _items，字段名不一致会让 Excel 建议凭空消失")
+            rec("as_row 带 _checks", "_checks" in row)
+            rec("as_row 带 _plain", "_plain" in row)
+
+        # 短名还原必须是精确的，不能把相近的两份材料当成一份
+        rec("same_material 认奖项前缀",
+            _MR.same_material("金火炬-水厂设备卫士", "水厂设备卫士"))
+        rec("same_material 不误判相近名",
+            not _MR.same_material("金火炬-水厂设备卫士", "水厂设备"))
+
+        # 五个旧 loader 必须都改走 MaterialRecord
+        for fn, needle in (
+            ("export_xlsx.py", "from material_record import load_dir"),
+            ("export_docx.py", "from material_record import load_dir"),
+            ("consistency.py", "from material_record import load_index"),
+            ("modes.py", "from material_record import load_index"),
+            ("isolate.py", "from material_record import load_index"),
+        ):
+            src_x = (ROOT / "scripts" / fn).read_text(encoding="utf-8")
+            rec("%s 已改走 MaterialRecord" % fn, needle in src_x,
+                "还在自己扫 score.json —— 键会再次漂移")
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
