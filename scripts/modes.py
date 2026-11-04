@@ -48,6 +48,22 @@ def load_scores(d):
     return out
 
 
+def _same_material(full_name: str, xlsx_name: str) -> bool:
+    """xlsx 的短名是否对应这份材料（精确还原，不模糊匹配）。
+
+    xlsx 写的是 strip_award 之后的短名，所以判断依据是：
+      full_name 去掉奖项前缀后 == xlsx_name
+    """
+    if not full_name or not xlsx_name:
+        return False
+    if full_name == xlsx_name:
+        return True
+    # 去掉 "<奖项>-" 或 "<奖项>－" 前缀
+    stripped = re.sub(r"^(金点子|金刚钻|金引擎|金智囊|金火炬|特别奖-[^\s\-－—]*)[-－—\s]*",
+                      "", full_name)
+    return stripped == xlsx_name
+
+
 def load_items(d):
     """从汇总 xlsx 里捞上次的建议条目。"""
     try:
@@ -136,14 +152,14 @@ def build_refine_pack(mat_dir, baseline, out):
                 dm.get("verified_grade", ""), (dm.get("rationale") or "")[:60]))
         lines.append("")
 
-        # xlsx 里的材料名是去掉了奖项前缀的短名（"水厂设备卫士——..."），
-        # 而 doc.json 的 name 带完整前缀。用"互相包含"匹配，别硬等号。
+        # 材料身份统一用 name（ADR-0003）。
+        # xlsx 第一列存的是去掉奖项前缀的短名（给人看），而 doc.json 的 name
+        # 带前缀。所以这里按「短名 + 已声明的奖项前缀」精确还原，不做模糊匹配：
+        # 模糊匹配会把「名字相近的两份材料」搞混，这正是要消灭的补丁。
         its = items.get(name) or []
         if not its:
             for k, v in items.items():
-                if not k or not name:
-                    continue
-                if k in name or name in k or k[:12] == name[:12]:
+                if _same_material(name, k):
                     its = v
                     break
         if its:

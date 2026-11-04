@@ -814,6 +814,47 @@ def main() -> int:
         rec("等级 %s 有示例" % g, bool(s.get("example")))
         rec("等级 %s 有判定规则" % g, bool(s.get("judge_rule")))
 
+    # ---------- 10n. ADR-0001/0002/0003 的强制约束 ----------
+    print("\n[10n] ADR 约束：规则性数字必须由评分卡拥有")
+    src_sc = (ROOT / "scripts" / "score.py").read_text(encoding="utf-8")
+    # ADR-0002：代码里不许再有 cap 兜底表
+    rec("score.py 没有 cap 兜底表",
+        not re.search(r'returns*{s*"A"s*:s*1.0', src_sc),
+        "兜底表又回来了（ADR-0002 禁止：rubric 缺 cap 应报错，不应猜）")
+    # ADR-0001：权重必须从 rubric 读，不许写死
+    rec("score.py 不写死 75/25 权重",
+        "w_on * on" in src_sc or "weights" in src_sc,
+        "权重被写死了（ADR-0001 禁止：改 rubric 会不生效）")
+    rec("score.py 不再出现 0.75 * on",
+        "0.75 * on" not in src_sc.replace(" ", " "),
+        "0.75 * on 还在（ADR-0001 禁止）")
+
+    # 缺 cap 的 rubric 必须被拒收
+    bad_rub = TMP / "bad-cap.json"
+    _rb = json.loads(RUB.read_text(encoding="utf-8"))
+    for _g in ("A", "B", "C", "D"):
+        (_rb.get("evidence_grades", {}).get(_g) or {}).pop("cap", None)
+    bad_rub.write_text(json.dumps(_rb, ensure_ascii=False), encoding="utf-8")
+    r = run([ROOT / "scripts" / "score.py", str(docx_path.parent / "selftest.doc.json"),
+             "--checks", str(TMP / "t.checks.json"),
+             "--judgments", str(jp), "--award", AWARD,
+             "--rubric", str(bad_rub), "--out", str(TMP)])
+    # 上一条依赖前面产物，若文件不存在就跳过（前面小节已覆盖）
+    rec("缺 cap 的评分卡被拒收", r.returncode == 2,
+        "退出码 %d，应为 2" % r.returncode)
+
+    # ADR-0003：modes.py 的模糊匹配补丁应已删除
+    src_md = (ROOT / "scripts" / "modes.py").read_text(encoding="utf-8")
+    rec("modes.py 不再有模糊匹配补丁",
+        "k[:12] == name[:12]" not in src_md,
+        "补丁还在（ADR-0003：应按 name 匹配，而不是打补丁）")
+
+    # B3：export_docx 必须走 material_role，不许内联正则
+    src_ed = (ROOT / "scripts" / "export_docx.py").read_text(encoding="utf-8")
+    rec("export_docx 用 declared_track()",
+        "declared_track(plain)" in src_ed,
+        "内联了赛道正则（ADR 外的问题：漏掉后置校验）")
+
     # ---------- 11. 异常输入必须给可读错误 ----------
     print("\n[11] 异常输入给可读错误（不是 traceback）")
     edge = TMP / "edge"; edge.mkdir()
