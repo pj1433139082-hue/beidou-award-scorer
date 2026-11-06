@@ -169,6 +169,31 @@ python scripts/score.py out/report.doc.json --checks out/report.checks.json \
 
 Award names are whatever keys your rubric defines; `--award` must match one of them.
 
+## Isolated review with a blind subagent
+
+`isolate.py` hides old `*.judgments.json` / `*.score.json` from disk. That is not enough when the
+agent writing the new judgments is the same one that just edited the report: it remembers the score
+it gave. A measured example: one reviewer with the editing context gave 89.3, a fresh-context
+subagent given only the document gave 57.0 on the same material, and caught an internal
+contradiction the editor had missed.
+
+For a genuinely independent judgement, use all three layers:
+
+| Layer | Blocks | Tool |
+|---|---|---|
+| Filesystem | Old answers findable on disk | `isolate.py prepare / check / end` |
+| Context | Agent remembering its own score | delegate to `subagent`; the parent must not write the judgments |
+| Input surface | Filenames, `name`/`source` metadata, scores inside docs | `blind_prepare.py` or `blind_minimal.py` |
+
+`blind_minimal.py` is the default: it puts only the docx (renamed to a neutral name) and a
+rule card in the workspace, with no checks.json, no rubric.example.json, and no `docs/`. Run
+`--verify` and require `blind: true` before delegating. The parent then runs `score.py
+--require-bound` on the subagent's judgments **without editing them**, and `isolate.py audit` to
+compare the two rounds. A large gap is information, not an error — put both rationales in front of
+the panel instead of averaging.
+
+Full procedure, prompt template and measured results: `docs/blind-subagent-review.md`.
+
 ## Step 3 — the reviewer's job
 
 1. Read `checks.json` first: the warn/fail lines already say where the document is empty or inconsistent.
